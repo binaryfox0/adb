@@ -60,7 +60,7 @@ function(target_add_asan target)
             -fno-omit-frame-pointer)
 
         target_link_options(${target} PRIVATE
-            -fsanitize=address)
+            -fsanitize=address,leak,undefined)
     else()
         message(FATAL_ERROR "AddressSanitizer was not supported by "
             "'${CMAKE_C_COMPILER_ID}'")
@@ -74,7 +74,8 @@ add_library(adb
     src/adb_alloc.c
     src/adb_error.c
     src/adb_log.c
-    src/adb_ctx.c)
+    src/adb_ctx.c
+    src/adb_conn.c)
 target_include_directories(adb PUBLIC include/)
 target_link_libraries(adb PRIVATE PkgConfig::libusb)
 target_add_strict_flags(adb)

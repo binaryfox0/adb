@@ -1,13 +1,9 @@
 #include <adb/adb_ctx.h>
+#include "adb_ctx_priv.h"
 
 #include <libusb.h>
 #include "adb_alloc_priv.h"
 #include "adb_log_priv.h"
-
-typedef struct adb_ctx
-{
-    libusb_context *usb;
-} adb_ctx_t;
 
 adb_error_t adb_ctx_create(
         adb_ctx_t **ctx)

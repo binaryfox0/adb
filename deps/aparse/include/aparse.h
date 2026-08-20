@@ -282,19 +282,19 @@ void aparse_list_free(aparse_list* list);
  * @brief Print informational message to stderr, with color if supported
  */
 #define aparse_prog_info(...) \
-    aparse_log(aparse_progname, APARSE__DEBUG_LABEL, __VA_ARGS__)
+    aparse_log(aparse_progname, APARSE__INFO_LABEL, __VA_ARGS__)
 
 /**
  * @brief Print warning message to stderr, with color if supported
  */
 #define aparse_prog_warn(...) \
-    aparse_log(aparse_progname, APARSE__DEBUG_LABEL, __VA_ARGS__)
+    aparse_log(aparse_progname, APARSE__WARN_LABEL, __VA_ARGS__)
 
 /**
  * @brief Print error message to stderr, with color if supported
  */
 #define aparse_prog_error(...) \
-    aparse_log(aparse_progname, APARSE__DEBUG_LABEL, __VA_ARGS__)
+    aparse_log(aparse_progname, APARSE__ERROR_LABEL, __VA_ARGS__)
 
 
 #ifdef __cplusplus
