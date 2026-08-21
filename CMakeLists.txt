@@ -75,6 +75,7 @@ add_library(adb
     src/adb_error.c
     src/adb_log.c
     src/adb_ctx.c
+    src/adb_lookup.c
     src/adb_conn.c)
 target_include_directories(adb PUBLIC include/)
 target_link_libraries(adb PRIVATE PkgConfig::libusb)

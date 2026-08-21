@@ -48,6 +48,6 @@ void adb__log(
     va_end(va);
 
     adb__log_callback(
-            adb__log_userdata, adb__log_level, 
+            adb__log_userdata, level, 
             buffer);
 }

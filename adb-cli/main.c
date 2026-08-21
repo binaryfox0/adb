@@ -2,6 +2,8 @@
 #include <aparse.h>
 #include <adb/adb.h>
 
+#define info aparse_prog_info
+
 #define CHECK(x, res, label) \
     if(((res) = x) != ADB_ERR_OK) goto label
 
@@ -55,6 +57,13 @@ int main(int argc, char **argv)
     adb_set_log_callback(log_callback, NULL, ADB_LOG_DEBUG);
     adb_ctx_create(&ctx);
     adb_conn_query(ctx, &infos, &count);
+    for(size_t i = 0; i < count; i++)
+    {
+        adb_conn_info_t *conn_info = infos[i];
+        info("Device %zu: %s - %s", i,
+                adb_conn_info_get_manufacturer(conn_info),
+                adb_conn_info_get_product(conn_info));
+    }
     adb_ctx_destroy(ctx);
     return 0;
 }

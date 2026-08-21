@@ -37,6 +37,10 @@ void adb_ctx_destroy(
 {
     if(!ctx)
         return;
+
+    for(size_t i = 0; i < ctx->infos_capacity; i++)
+        adb__free(ctx->conn_infos[i]);
+    adb__free(ctx->conn_infos);
     libusb_exit(ctx->usb);
     adb__free(ctx);
 }

@@ -8,9 +8,14 @@ typedef struct adb_ctx adb_ctx_t;
 typedef struct adb_conn adb_conn_t;
 typedef struct adb_conn_info adb_conn_info_t;
 
+const char *adb_conn_info_get_manufacturer(
+        const adb_conn_info_t *conn_info);
+const char *adb_conn_info_get_product(
+        const adb_conn_info_t *conn_info);
+
 adb_error_t adb_conn_query(
         adb_ctx_t *ctx,
-        adb_conn_info_t ***infos,
-        size_t *count);
+        adb_conn_info_t ***conn_infos,
+        size_t *conn_count);
 
 #endif
