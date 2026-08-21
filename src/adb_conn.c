@@ -1,10 +1,12 @@
 #include <adb/adb_conn.h>
+#include "adb_conn_priv.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
 
 #include <libusb.h>
+
 #include "adb/adb_error.h"
 #include "adb_log_priv.h"
 #include "adb_ctx_priv.h"
@@ -20,12 +22,24 @@
 
 typedef struct adb_conn_info
 {
+    libusb_device *device;
+
+
+    uint16_t vendor_id;
+    uint16_t product_id;
+    uint8_t itf_idx;
+    uint8_t read_ep;
+    uint8_t write_ep;
+
     char manufacturer[256];
     char product[256];
     char serial[256];
-    uint16_t vendor_id;
-    uint16_t product_id;
 } adb_conn_info_t;
+
+typedef struct adb_conn
+{
+    libusb_device_handle *handle;
+} adb_conn_t;
 
 const char *adb_conn_info_get_manufacturer(
         const adb_conn_info_t *conn_info) {
@@ -38,14 +52,14 @@ const char *adb_conn_info_get_product(
 
 static bool adb__find_adb_interface(
         libusb_device *device,
-        int *itf_idx,
-        int *read_ep,
-        int *write_ep)
+        uint8_t *itf_idx,
+        uint8_t *read_ep,
+        uint8_t *write_ep)
 {
     int res = 0;
     struct libusb_config_descriptor *config = NULL;
-    int bulk_in = 0;
-    int bulk_out = 0;
+    uint8_t bulk_in = 0;
+    uint8_t bulk_out = 0;
 
     if(!device || !itf_idx || !read_ep || !write_ep)
         return false;
@@ -60,7 +74,7 @@ static bool adb__find_adb_interface(
         return false;
     }
 
-    for(int i = 0; i < config->bNumInterfaces; i++)
+    for(uint8_t i = 0; i < config->bNumInterfaces; i++)
     {
         const struct libusb_interface *itf = &config->interface[i];
         const struct libusb_interface_descriptor *itf_desc = NULL;
@@ -125,7 +139,10 @@ static bool adb__find_adb_interface(
 static adb_error_t adb__append_conn_info(
         adb_ctx_t *ctx,
         libusb_device *device,
-        const struct libusb_device_descriptor *desc)
+        const struct libusb_device_descriptor *desc,
+        const uint8_t itf_idx,
+        const uint8_t read_ep,
+        const uint8_t write_ep)
 {
     adb_conn_info_t *conn_info = NULL;
     struct libusb_device_handle *handle = NULL;
@@ -187,10 +204,12 @@ static adb_error_t adb__append_conn_info(
     res = libusb_open(device, &handle);
     if(res != 0)
     {
-        ADB__WARN("failed to open USB device %04X:%04X: %s",
+        ADB__WARN("failed to open USB device %04X:%04X",
                 desc->idVendor,
-                desc->idProduct,
-                libusb_error_name(res));
+                desc->idProduct);
+        ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res),
+                    libusb_strerror(res));
         return ADB_ERR_USB;
     }
 
@@ -204,10 +223,12 @@ static adb_error_t adb__append_conn_info(
 
         if(res < 0)
         {
-            ADB__DEBUG("failed to read manufacturer for %04X:%04X: %s",
+            ADB__DEBUG("failed to read manufacturer for %04X:%04X",
                     desc->idVendor,
-                    desc->idProduct,
-                    libusb_error_name(res));
+                    desc->idProduct);
+            ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res),
+                    libusb_strerror(res));
         }
     }
 
@@ -221,10 +242,12 @@ static adb_error_t adb__append_conn_info(
 
         if(res < 0)
         {
-            ADB__DEBUG("failed to read product for %04X:%04X: %s",
+            ADB__DEBUG("failed to read product for %04X:%04X",
                     desc->idVendor,
-                    desc->idProduct,
-                    libusb_error_name(res));
+                    desc->idProduct);
+            ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res),
+                    libusb_strerror(res));
         }
     }
 
@@ -238,17 +261,16 @@ static adb_error_t adb__append_conn_info(
 
         if(res < 0)
         {
-            ADB__DEBUG("failed to read serial for %04X:%04X: %s",
+            ADB__DEBUG("failed to read serial for %04X:%04X",
                     desc->idVendor,
-                    desc->idProduct,
-                    libusb_error_name(res));
+                    desc->idProduct);
+            ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res),
+                    libusb_strerror(res));
         }
     }
 
     libusb_close(handle);
-
-    conn_info->vendor_id = desc->idVendor;
-    conn_info->product_id = desc->idProduct;
 
     if(!manufacturer[0] || !product[0])
     {
@@ -272,6 +294,13 @@ static adb_error_t adb__append_conn_info(
         }
     }
 
+    conn_info->device = libusb_ref_device(device);
+    conn_info->vendor_id = desc->idVendor;
+    conn_info->product_id = desc->idProduct;
+    conn_info->itf_idx = itf_idx;
+    conn_info->read_ep = read_ep;
+    conn_info->write_ep = write_ep;
+
     snprintf((char *)conn_info->manufacturer, sizeof(conn_info->manufacturer),
             "%s", manufacturer[0] ? (char *)manufacturer : "unknown");
     snprintf((char *)conn_info->product, sizeof(conn_info->product),
@@ -280,7 +309,6 @@ static adb_error_t adb__append_conn_info(
             "%s", serial[0] ? (char *)serial : "unknown");
 
     ctx->infos_count++;
-
     ADB__INFO("found ADB device %04X:%04X %s %s (%s)",
             conn_info->vendor_id,
             conn_info->product_id,
@@ -291,7 +319,16 @@ static adb_error_t adb__append_conn_info(
     return ADB_ERR_OK;
 }
 
-adb_error_t adb_conn_query(
+void adb__conn_info_destroy(
+        adb_conn_info_t *conn_info)
+{
+    if(!conn_info)
+        return;
+    libusb_unref_device(conn_info->device);
+    adb__free(conn_info);
+}
+
+adb_error_t adb_query_conn(
         adb_ctx_t *ctx,
         adb_conn_info_t ***conn_infos,
         size_t *conn_count)
@@ -318,7 +355,8 @@ adb_error_t adb_conn_query(
 
         ADB__ERROR("failed to get USB device list: %s",
                 libusb_error_name(res));
-        ADB__DEBUG("reason: %s",
+        ADB__DEBUG("reason: %s (%s)",
+                libusb_error_name(res),
                 libusb_strerror(res));
 
         return ADB_ERR_USB;
@@ -332,9 +370,9 @@ adb_error_t adb_conn_query(
         struct libusb_device_descriptor desc = {0};
 
         adb_error_t adb_res = ADB_ERR_OK;
-        int itf_idx = 0;
-        int read_ep = 0;
-        int write_ep = 0;
+        uint8_t itf_idx = 0;
+        uint8_t read_ep = 0;
+        uint8_t write_ep = 0;
 
         res = libusb_get_device_descriptor(device, &desc);
         if(res != 0)
@@ -362,7 +400,10 @@ adb_error_t adb_conn_query(
                 read_ep,
                 write_ep);
 
-        adb_res = adb__append_conn_info(ctx, device, &desc);
+        adb_res = adb__append_conn_info(ctx, 
+                device, &desc,
+                itf_idx,
+                read_ep, write_ep);
         if(adb_res != ADB_ERR_OK)
         {
             ADB__ERROR("failed to add ADB device %04X:%04X",
@@ -382,4 +423,61 @@ adb_error_t adb_conn_query(
             ctx->infos_count);
 
     return ret;
+}
+
+#define ADB__COMMAND(a, b, c, d) ((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
+#define ADB__CNXN ADB__COMMAND('C', 'N', 'X', 'N')
+
+adb_error_t adb_conn_create(
+        adb_conn_t **conn,
+        const adb_conn_info_t *conn_info)
+{
+    adb_conn_t *tmp = NULL;
+    int res = 0;
+    if(!conn || !conn_info)
+        return ADB_ERR_PARAM;
+
+    tmp = adb__calloc(1, sizeof(*tmp));
+    if(!tmp)
+        return ADB_ERR_NO_MEM;
+    
+    res = libusb_open(conn_info->device, &tmp->handle);
+    if(res != 0)
+    {
+        ADB__ERROR("failed to open USB device %04X:%04X %s %s",
+                conn_info->vendor_id, conn_info->product_id,
+                conn_info->manufacturer, conn_info->product);
+        ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res),
+                    libusb_strerror(res));
+        return ADB_ERR_USB;
+    }
+
+    res = libusb_claim_interface(tmp->handle, 
+            conn_info->itf_idx);
+    if(res != 0)
+    {
+        ADB__ERROR("failed to claim USB device interface: %04X:%04X %s %s",
+                conn_info->vendor_id, conn_info->product_id,
+                conn_info->manufacturer, conn_info->product);
+        ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res),
+                    libusb_strerror(res));
+
+        adb_conn_destroy(tmp);
+        return ADB_ERR_USB;
+    }
+
+    *conn = tmp;
+    return ADB_ERR_OK;
+}
+
+void adb_conn_destroy(
+        adb_conn_t *conn)
+{
+    if(!conn)
+        return;
+
+    libusb_close(conn->handle);
+    adb__free(conn);
 }

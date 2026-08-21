@@ -13,9 +13,16 @@ const char *adb_conn_info_get_manufacturer(
 const char *adb_conn_info_get_product(
         const adb_conn_info_t *conn_info);
 
-adb_error_t adb_conn_query(
+adb_error_t adb_query_conn(
         adb_ctx_t *ctx,
         adb_conn_info_t ***conn_infos,
         size_t *conn_count);
+
+adb_error_t adb_conn_create(
+        adb_conn_t **conn,
+        const adb_conn_info_t *conn_info);
+
+void adb_conn_destroy(
+        adb_conn_t *conn);
 
 #endif

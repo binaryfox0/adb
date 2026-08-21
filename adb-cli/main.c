@@ -56,7 +56,7 @@ int main(int argc, char **argv)
 
     adb_set_log_callback(log_callback, NULL, ADB_LOG_DEBUG);
     adb_ctx_create(&ctx);
-    adb_conn_query(ctx, &infos, &count);
+    adb_query_conn(ctx, &infos, &count);
     for(size_t i = 0; i < count; i++)
     {
         adb_conn_info_t *conn_info = infos[i];
