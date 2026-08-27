@@ -67,6 +67,8 @@ function(target_add_asan target)
     endif()
 endfunction()
 
+find_package(MbedTLS)
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(libusb libusb-1.0 REQUIRED IMPORTED_TARGET)
 
@@ -78,7 +80,11 @@ add_library(adb
     src/adb_lookup.c
     src/adb_conn.c)
 target_include_directories(adb PUBLIC include/)
-target_link_libraries(adb PRIVATE PkgConfig::libusb)
+target_link_libraries(adb PRIVATE 
+    PkgConfig::libusb
+    MbedTLS::mbedtls
+    MbedTLS::mbedx509
+    MbedTLS::mbedcrypto)
 target_add_strict_flags(adb)
 target_add_asan(adb)
 

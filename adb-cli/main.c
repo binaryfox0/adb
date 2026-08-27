@@ -69,7 +69,6 @@ static void pair_command(
     }
 
     *colon = '\0';
-
     errno = 0;
     port = strtol(colon + 1, &end, 10);
     if(
@@ -88,13 +87,14 @@ static void pair_command(
 
     if(port == 0 || port > UINT16_MAX)
     {
-        error("Invalid address \"%s\": port must be between 1 and %u",
+        error("Invalid address \"%s\": port must be between 1 and %d",
               ip, UINT16_MAX);
         return;
     }
 
     CHECK(adb_conn_create_wireless(&conn, 
                 host, (uint16_t)port), err, cleanup);
+    (void)code;
 
 cleanup:
     adb_conn_destroy(conn);
@@ -104,15 +104,27 @@ int main(int argc, char **argv)
 {
     aparse_arg pair_args[] =
     {
+        aparse_arg_string(
+                "ip", 
+                NULL, 0, 
+                "IP to target device (host:port)"),
+        aparse_arg_string(
+                "code",
+                NULL, 0, 
+                "Pairing code alongside with the IP"),
         aparse_arg_end_marker
     };
     aparse_arg commands[] =
     {
-        aparse_arg_subparser(
+        aparse_arg_subparser_impl(
                 "pair", 
                 pair_args, pair_command, 
                 NULL, 0, 
-                "Pair wireless ADB device through TCP"),
+                "Pair wireless ADB device through TCP",
+                (size_t[]){
+                    0, sizeof(const char*),
+                    sizeof(const char*), sizeof(const char*)
+                }, 2),
         aparse_arg_end_marker
     };
     aparse_arg main_args[] =
