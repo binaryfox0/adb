@@ -42,6 +42,32 @@ static void log_callback(
     }
 }
 
+static void query_command(
+        const aparse_arg *args,
+        void *param)
+{
+    adb_error_t err = ADB_ERR_OK;
+    adb_ctx_t *ctx = NULL;
+    adb_usb_info_t **infos = NULL;
+    size_t count = 0;
+
+    (void)args;
+    (void)param;
+    
+    CHECK(adb_ctx_create(&ctx), err, cleanup);
+    CHECK(adb_query_usb(ctx, &infos, &count), 
+            err, cleanup);
+    for(size_t i = 0; i < count; i++)
+    {
+        adb_usb_info_t *conn_info = infos[i];
+        info("Device %zu: %s - %s", i,
+                adb_conn_info_get_manufacturer(conn_info),
+                adb_conn_info_get_product(conn_info));
+    }
+cleanup:
+    adb_ctx_destroy(ctx);
+}
+
 static void pair_command(
         const aparse_arg *args,
         void *param)
@@ -125,6 +151,11 @@ int main(int argc, char **argv)
                     0, sizeof(const char*),
                     sizeof(const char*), sizeof(const char*)
                 }, 2),
+        aparse_arg_subparser(
+                "query",
+                NULL, query_command,
+                NULL, 0,
+                "Query all USB connected ADB devices"),
         aparse_arg_end_marker
     };
     aparse_arg main_args[] =
@@ -133,10 +164,6 @@ int main(int argc, char **argv)
         aparse_arg_end_marker
     };
     aparse_list dispatch = {0};
-
-    adb_ctx_t *ctx = NULL;
-    adb_usb_info_t **infos = NULL;
-    size_t count = 0;
 
     if(aparse_parse(
             argc, argv,
@@ -147,15 +174,5 @@ int main(int argc, char **argv)
     adb_set_log_callback(log_callback, NULL, 
             ADB_LOG_DEBUG);
     aparse_dispatch_all(&dispatch);
-    adb_ctx_create(&ctx);
-    adb_query_usb(ctx, &infos, &count);
-    for(size_t i = 0; i < count; i++)
-    {
-        adb_usb_info_t *conn_info = infos[i];
-        info("Device %zu: %s - %s", i,
-                adb_conn_info_get_manufacturer(conn_info),
-                adb_conn_info_get_product(conn_info));
-    }
-    adb_ctx_destroy(ctx);
     return 0;
 }
