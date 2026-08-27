@@ -7,8 +7,12 @@ typedef enum
     ADB_ERR_GENERIC,
     ADB_ERR_PARAM,
     ADB_ERR_NO_MEM,
+    ADB_ERR_IO,
     ADB_ERR_USB,
     ADB_ERR_NETWORK,
+    ADB_ERR_TIMEOUT,
+    ADB_ERR_DISCONNECTED,
+    ADB_ERR_PROTOCOL,
     ADB__ERR_COUNT
 } adb_error_t;
 

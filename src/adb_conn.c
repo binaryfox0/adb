@@ -4,6 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <errno.h>
+
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/errno.h>
 
 #include <libusb.h>
 
@@ -12,6 +17,7 @@
 #include "adb_ctx_priv.h"
 #include "adb_alloc_priv.h"
 #include "adb_lookup.h"
+#include "adb_error_priv.h"
 
 #define ADB__INTERFACE_CLASS    0xFF
 #define ADB__INTERFACE_SUBCLASS 0x42
@@ -20,10 +26,9 @@
 #define ADB__DEVICE_CLASS       0xDC
 #define ADB__DEVICE_SUBCLASS    0x02
 
-typedef struct adb_conn_info
+typedef struct adb_usb_info
 {
     libusb_device *device;
-
 
     uint16_t vendor_id;
     uint16_t product_id;
@@ -34,19 +39,36 @@ typedef struct adb_conn_info
     char manufacturer[256];
     char product[256];
     char serial[256];
-} adb_conn_info_t;
+} adb_usb_info_t;
+
+typedef enum 
+{
+    ADB__CONN_WIRED,
+    ADB__CONN_WIRELESS,
+    ADB__CONN_CUSTOM
+} adb__conn_type_t;
 
 typedef struct adb_conn
 {
+    adb__conn_type_t type;
+
     libusb_device_handle *handle;
+    uint8_t read_ep;
+    uint8_t write_ep;
+
+    int sock;
+    
+    void *userdata;
+    adb_read_callback_t read;
+    adb_write_callback_t write;
 } adb_conn_t;
 
 const char *adb_conn_info_get_manufacturer(
-        const adb_conn_info_t *conn_info) {
+        const adb_usb_info_t *conn_info) {
     return conn_info ? (const char *)conn_info->manufacturer : NULL;
 }
 const char *adb_conn_info_get_product(
-        const adb_conn_info_t *conn_info) {
+        const adb_usb_info_t *conn_info) {
     return conn_info ? (const char *)conn_info->product : NULL;
 }
 
@@ -144,7 +166,7 @@ static adb_error_t adb__append_conn_info(
         const uint8_t read_ep,
         const uint8_t write_ep)
 {
-    adb_conn_info_t *conn_info = NULL;
+    adb_usb_info_t *conn_info = NULL;
     struct libusb_device_handle *handle = NULL;
     unsigned char manufacturer[256] = {0};
     unsigned char product[256] = {0};
@@ -175,7 +197,7 @@ static adb_error_t adb__append_conn_info(
     {
         size_t old_capacity = 0;
         size_t new_capacity = 0;
-        adb_conn_info_t **new_infos = NULL;
+        adb_usb_info_t **new_infos = NULL;
 
         old_capacity = ctx->infos_capacity;        
         new_capacity = ctx->infos_capacity == 0
@@ -320,7 +342,7 @@ static adb_error_t adb__append_conn_info(
 }
 
 void adb__conn_info_destroy(
-        adb_conn_info_t *conn_info)
+        adb_usb_info_t *conn_info)
 {
     if(!conn_info)
         return;
@@ -328,9 +350,9 @@ void adb__conn_info_destroy(
     adb__free(conn_info);
 }
 
-adb_error_t adb_query_conn(
+adb_error_t adb_query_usb(
         adb_ctx_t *ctx,
-        adb_conn_info_t ***conn_infos,
+        adb_usb_info_t ***usb_infos,
         size_t *conn_count)
 {
     adb_error_t ret = ADB_ERR_OK;
@@ -338,16 +360,12 @@ adb_error_t adb_query_conn(
     libusb_device **list = NULL;
     ssize_t usb_count = 0;
 
-    if(!ctx || !conn_infos || !conn_count)
-    {
-        ADB__ERROR("invalid parameter to adb_conn_query");
+    if(!ctx || !usb_infos || !conn_count)
         return ADB_ERR_PARAM;
-    }
 
     ADB__INFO("starting ADB device query");
 
     ctx->infos_count = 0;
-
     usb_count = libusb_get_device_list(ctx->usb, &list);
     if(usb_count < 0)
     {
@@ -416,7 +434,7 @@ adb_error_t adb_query_conn(
 
     libusb_free_device_list(list, true);
 
-    *conn_infos = ctx->conn_infos;
+    *usb_infos = ctx->conn_infos;
     *conn_count = ctx->infos_count;
 
     ADB__INFO("ADB device query completed: %zu device(s)",
@@ -428,47 +446,210 @@ adb_error_t adb_query_conn(
 #define ADB__COMMAND(a, b, c, d) ((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
 #define ADB__CNXN ADB__COMMAND('C', 'N', 'X', 'N')
 
-adb_error_t adb_conn_create(
+static adb_error_t adb__read_libusb(
+        void *userdata,
+        void *data,
+        size_t size)
+{
+    libusb_device_handle *handle = ((adb_conn_t*)userdata)->handle;
+    uint8_t endpoint = ((adb_conn_t*)userdata)->read_ep;
+    int transferred = 0;
+    int ret = 0;
+
+    ret = libusb_bulk_transfer(
+            handle,
+            endpoint,
+            data,
+            (int)size,
+            &transferred,
+            0);
+
+    if(ret != LIBUSB_SUCCESS)
+        return adb__error_from_libusb(ret);
+
+    if(transferred != (int)size)
+        return ADB_ERR_IO;
+
+    return ADB_ERR_OK;
+}
+
+static adb_error_t adb__write_libusb(
+        void *userdata,
+        const void *data,
+        size_t size)
+{
+    libusb_device_handle *handle = ((adb_conn_t*)userdata)->handle;
+    uint8_t endpoint = ((adb_conn_t*)userdata)->read_ep;
+    int transferred = 0;
+    int ret = 0;
+
+    ret = libusb_bulk_transfer(
+            handle,
+            endpoint,
+            (uint8_t*)(uintptr_t)data,
+            (int)size,
+            &transferred,
+            0);
+
+    if(ret != LIBUSB_SUCCESS)
+        return adb__error_from_libusb(ret);
+
+    if(transferred != (int)size)
+        return ADB_ERR_IO;
+
+    return ADB_ERR_OK;
+}
+
+adb_error_t adb_conn_create_from_info(
         adb_conn_t **conn,
-        const adb_conn_info_t *conn_info)
+        const adb_usb_info_t *usb_info)
 {
     adb_conn_t *tmp = NULL;
     int res = 0;
-    if(!conn || !conn_info)
+    if(!conn || !usb_info)
         return ADB_ERR_PARAM;
 
     tmp = adb__calloc(1, sizeof(*tmp));
     if(!tmp)
         return ADB_ERR_NO_MEM;
+    tmp->type = ADB__CONN_WIRED; // for partial cleanup
     
-    res = libusb_open(conn_info->device, &tmp->handle);
+    res = libusb_open(usb_info->device, &tmp->handle);
     if(res != 0)
     {
         ADB__ERROR("failed to open USB device %04X:%04X %s %s",
-                conn_info->vendor_id, conn_info->product_id,
-                conn_info->manufacturer, conn_info->product);
+                usb_info->vendor_id, usb_info->product_id,
+                usb_info->manufacturer, usb_info->product);
         ADB__INFO("reason: %s (%s)",
                     libusb_error_name(res),
                     libusb_strerror(res));
+        adb__free(tmp);
         return ADB_ERR_USB;
     }
 
     res = libusb_claim_interface(tmp->handle, 
-            conn_info->itf_idx);
+            usb_info->itf_idx);
     if(res != 0)
     {
         ADB__ERROR("failed to claim USB device interface: %04X:%04X %s %s",
-                conn_info->vendor_id, conn_info->product_id,
-                conn_info->manufacturer, conn_info->product);
+                usb_info->vendor_id, usb_info->product_id,
+                usb_info->manufacturer, usb_info->product);
         ADB__INFO("reason: %s (%s)",
                     libusb_error_name(res),
                     libusb_strerror(res));
-
         adb_conn_destroy(tmp);
         return ADB_ERR_USB;
     }
 
+    tmp->read = adb__read_libusb;
+    tmp->write = adb__write_libusb;
     *conn = tmp;
+    return ADB_ERR_OK;
+}
+
+
+static adb_error_t adb__read_wireless(
+        void *userdata,
+        void *buf,
+        size_t size)
+{
+    int fd = ((adb_conn_t*)userdata)->sock;
+    size_t offset = 0;
+    while(offset < size)
+    {
+        ssize_t res = recv(fd, 
+                (uint8_t*)buf + offset, 
+                size - offset, 0);
+        if(res <= 0)
+            return adb__error_from_errno(errno);
+        offset += (size_t)res;
+    }
+
+    return ADB_ERR_OK;
+}
+
+static adb_error_t adb__write_wireless(
+        void *userdata,
+        const void *buf,
+        size_t size)
+{
+    int fd = ((adb_conn_t*)userdata)->sock;
+    size_t offset = 0;
+    while(offset < size)
+    {
+        ssize_t ret = send(fd, 
+                (const uint8_t*)buf + offset, 
+                size - offset, 0);
+        if(ret <= 0)
+            return adb__error_from_errno(errno);
+        offset += (size_t)ret;
+    }
+
+    return ADB_ERR_OK;
+}
+adb_error_t adb_conn_create_wireless(
+        adb_conn_t **conn,
+        const char *host,
+        const uint16_t port)
+{
+    adb_conn_t *tmp = NULL;
+    int err = 0;
+    struct sockaddr_in addr = {0};
+    if(!conn || !host || port == 0)
+        return ADB_ERR_PARAM;
+
+    tmp = adb__calloc(1, sizeof(*tmp));
+    if(!tmp)
+        return ADB_ERR_NO_MEM;
+    tmp->type = ADB__CONN_WIRELESS; // for partial cleanup
+
+    tmp->sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(tmp->sock < 0)
+    {
+        ADB__ERROR("failed to create socket");
+        ADB__INFO("reason: %s", strerror(errno));
+        adb__free(tmp);
+        return ADB_ERR_NETWORK;
+    }
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, host, &addr.sin_addr);
+
+    err = connect(tmp->sock, 
+            (struct sockaddr*)&addr, sizeof(addr));
+    if(err < 0)
+    {
+        ADB__ERROR("failed to connect to %s:%d", host, port);
+        ADB__INFO("reason: %s", strerror(errno));
+        adb_conn_destroy(tmp);
+        return ADB_ERR_NETWORK;
+    }
+    
+    tmp->read = adb__read_wireless;
+    tmp->write = adb__write_wireless;
+    *conn = tmp;
+    return ADB_ERR_OK;
+}
+
+adb_error_t adb_conn_create_custom(
+        adb_conn_t **conn,
+        const adb_read_callback_t read_cb,
+        const adb_write_callback_t write_cb,
+        void *userdata)
+{
+    adb_conn_t *tmp = NULL;
+    if(!conn || !read_cb || !write_cb)
+        return ADB_ERR_PARAM;
+    
+    tmp = adb__calloc(1, sizeof(*tmp));
+    if(!tmp)
+        return ADB_ERR_NO_MEM;
+
+    tmp->type = ADB__CONN_CUSTOM;
+    tmp->read = read_cb;
+    tmp->write = write_cb;
+    tmp->userdata = userdata;
     return ADB_ERR_OK;
 }
 
@@ -478,6 +659,12 @@ void adb_conn_destroy(
     if(!conn)
         return;
 
-    libusb_close(conn->handle);
+    if(conn->type == ADB__CONN_WIRED)
+    {
+            libusb_close(conn->handle);
+    } else if(conn->type == ADB__CONN_WIRELESS) {
+        shutdown(conn->sock, SHUT_RDWR);
+        close(conn->sock);
+    }
     adb__free(conn);
 }
