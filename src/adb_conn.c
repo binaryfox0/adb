@@ -11,6 +11,11 @@
 #include <sys/errno.h>
 
 #include <libusb.h>
+#include <mbedtls/error.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+
 
 #include "adb/adb_error.h"
 #include "adb_log_priv.h"
@@ -48,16 +53,34 @@ typedef enum
     ADB__CONN_CUSTOM
 } adb__conn_type_t;
 
+typedef struct
+{
+    libusb_device_handle *handle;
+    uint8_t read_ep;
+    uint8_t write_ep;
+} adb__conn_usb_t;
+
+typedef struct
+{
+    adb_error_t last_error;
+
+    int sock;
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config conf;
+    mbedtls_ctr_drbg_context drbg;
+    mbedtls_entropy_context entropy;
+} adb__conn_tls_t;
+
 typedef struct adb_conn
 {
     adb__conn_type_t type;
 
-    libusb_device_handle *handle;
-    uint8_t read_ep;
-    uint8_t write_ep;
-
-    int sock;
-    
+    union
+    {
+        adb__conn_usb_t usb;
+        adb__conn_tls_t tls;
+    };
+            
     void *userdata;
     adb_read_callback_t read;
     adb_write_callback_t write;
@@ -381,7 +404,6 @@ adb_error_t adb_query_usb(
     }
 
     ADB__DEBUG("enumerated %zd USB device(s)", usb_count);
-
     for(ssize_t i = 0; i < usb_count; i++)
     {
         libusb_device *device = list[i];
@@ -448,18 +470,20 @@ adb_error_t adb_query_usb(
 
 static adb_error_t adb__read_libusb(
         void *userdata,
-        void *data,
+        void *buf,
         size_t size)
 {
-    libusb_device_handle *handle = ((adb_conn_t*)userdata)->handle;
-    uint8_t endpoint = ((adb_conn_t*)userdata)->read_ep;
+    adb__conn_usb_t *usb = userdata;
     int transferred = 0;
     int ret = 0;
+    
+    if(!usb || (!buf && size))
+        return ADB_ERR_PARAM;
 
     ret = libusb_bulk_transfer(
-            handle,
-            endpoint,
-            data,
+            usb->handle,
+            usb->read_ep,
+            buf,
             (int)size,
             &transferred,
             0);
@@ -478,14 +502,13 @@ static adb_error_t adb__write_libusb(
         const void *data,
         size_t size)
 {
-    libusb_device_handle *handle = ((adb_conn_t*)userdata)->handle;
-    uint8_t endpoint = ((adb_conn_t*)userdata)->read_ep;
+    adb__conn_usb_t *usb = userdata;
     int transferred = 0;
     int ret = 0;
 
     ret = libusb_bulk_transfer(
-            handle,
-            endpoint,
+            usb->handle,
+            usb->write_ep,
             (uint8_t*)(uintptr_t)data,
             (int)size,
             &transferred,
@@ -513,8 +536,12 @@ adb_error_t adb_conn_create_from_info(
     if(!tmp)
         return ADB_ERR_NO_MEM;
     tmp->type = ADB__CONN_WIRED; // for partial cleanup
+                                 
+    ADB__INFO("creating connection for USB device %04X:%04X %s %s",
+            usb_info->vendor_id, usb_info->product_id,
+            usb_info->manufacturer, usb_info->product);
     
-    res = libusb_open(usb_info->device, &tmp->handle);
+    res = libusb_open(usb_info->device, &tmp->usb.handle);
     if(res != 0)
     {
         ADB__ERROR("failed to open USB device %04X:%04X %s %s",
@@ -527,11 +554,12 @@ adb_error_t adb_conn_create_from_info(
         return ADB_ERR_USB;
     }
 
-    res = libusb_claim_interface(tmp->handle, 
+    res = libusb_claim_interface(tmp->usb.handle, 
             usb_info->itf_idx);
     if(res != 0)
     {
-        ADB__ERROR("failed to claim USB device interface: %04X:%04X %s %s",
+        ADB__ERROR("failed to claim USB device interface %u: %04X:%04X %s %s",
+                usb_info->itf_idx,
                 usb_info->vendor_id, usb_info->product_id,
                 usb_info->manufacturer, usb_info->product);
         ADB__INFO("reason: %s (%s)",
@@ -544,69 +572,230 @@ adb_error_t adb_conn_create_from_info(
     tmp->read = adb__read_libusb;
     tmp->write = adb__write_libusb;
     *conn = tmp;
+
+    ADB__INFO("created connection successfully for USB device "
+            "%04X:%04X %s %s (interface %u)",
+            usb_info->vendor_id, usb_info->product_id,
+            usb_info->manufacturer, usb_info->product,
+            usb_info->itf_idx);
     return ADB_ERR_OK;
 }
 
 
-static adb_error_t adb__read_wireless(
+static int adb__read_tcp(
+        void *userdata,
+        unsigned char *buf,
+        size_t size)
+{
+    adb__conn_tls_t *tls = userdata;
+    ssize_t res = 0;
+
+    res = recv(
+            tls->sock,
+            buf, size,
+            0);
+
+    if(res < 0)
+    {
+        tls->last_error = adb__error_from_errno(errno);
+        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    }
+
+    if(res == 0)
+        return 0;
+
+    return (int)res;
+}
+
+static int adb__write_tcp(
+        void *userdata,
+        const unsigned char *buf,
+        size_t size)
+{
+    adb__conn_tls_t *tls = userdata;
+    ssize_t res = send(
+            tls->sock, 
+            buf, size, 0);
+    if(res < 0)
+    {
+        tls->last_error = adb__error_from_errno(errno);
+        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    }
+    else if(res == 0)
+        return MBEDTLS_ERR_SSL_CONN_EOF;
+    return (int)res;
+}
+
+static adb_error_t adb__read_tls(
         void *userdata,
         void *buf,
-        size_t size)
+        const size_t size)
 {
-    int fd = ((adb_conn_t*)userdata)->sock;
+    adb__conn_tls_t *tls = userdata;
     size_t offset = 0;
+    int ret = 0;
+
+    if(!tls || (!buf && size))
+        return ADB_ERR_PARAM;
+
     while(offset < size)
     {
-        ssize_t res = recv(fd, 
-                (uint8_t*)buf + offset, 
-                size - offset, 0);
-        if(res <= 0)
-            return adb__error_from_errno(errno);
-        offset += (size_t)res;
+        ret = mbedtls_ssl_read(
+                &tls->ssl,
+                (unsigned char *)buf + offset,
+                size - offset);
+
+        if(ret > 0)
+        {
+            offset += (size_t)ret;
+            continue;
+        }
+
+        if(ret == 0 ||
+           ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY ||
+           ret == MBEDTLS_ERR_SSL_CONN_EOF)
+            return ADB_ERR_DISCONNECTED;
+
+        if(ret == MBEDTLS_ERR_SSL_INTERNAL_ERROR &&
+           tls->last_error != ADB_ERR_OK)
+            return tls->last_error;
+
+        return ADB_ERR_GENERIC;
     }
 
     return ADB_ERR_OK;
 }
 
-static adb_error_t adb__write_wireless(
+static adb_error_t adb__write_tls(
         void *userdata,
         const void *buf,
-        size_t size)
+        const size_t size)
 {
-    int fd = ((adb_conn_t*)userdata)->sock;
+    adb__conn_tls_t *tls = userdata;
     size_t offset = 0;
+    int ret = 0;
+
+    if(!tls || (!buf && size))
+        return ADB_ERR_PARAM;
+
     while(offset < size)
     {
-        ssize_t ret = send(fd, 
-                (const uint8_t*)buf + offset, 
-                size - offset, 0);
-        if(ret <= 0)
-            return adb__error_from_errno(errno);
-        offset += (size_t)ret;
+        ret = mbedtls_ssl_write(
+                &tls->ssl,
+                (const unsigned char *)buf + offset,
+                size - offset);
+
+        if(ret > 0)
+        {
+            offset += (size_t)ret;
+            continue;
+        }
+
+        if(ret == MBEDTLS_ERR_SSL_INTERNAL_ERROR &&
+           tls->last_error != ADB_ERR_OK)
+            return tls->last_error;
+
+        return ADB_ERR_GENERIC;
     }
 
     return ADB_ERR_OK;
 }
+
+static adb_error_t adb__tls_init(
+        adb__conn_tls_t *tls)
+{
+    int err = 0;
+
+    mbedtls_ssl_init(&tls->ssl);
+    mbedtls_ssl_config_init(&tls->conf);
+    mbedtls_ctr_drbg_init(&tls->drbg);
+    mbedtls_entropy_init(&tls->entropy);
+
+    err = mbedtls_ctr_drbg_seed(
+            &tls->drbg,
+            mbedtls_entropy_func,
+            &tls->entropy,
+            NULL, 0);
+    if (err != 0)
+    {
+        char buf[256] = {0};
+        mbedtls_strerror(err, buf, sizeof(buf));
+        ADB__ERROR("failed to create random generator");
+        ADB__INFO("reason: %s", buf);
+        return ADB_ERR_CRYPTO;
+    }
+
+    err = mbedtls_ssl_config_defaults(
+            &tls->conf,
+            MBEDTLS_SSL_IS_CLIENT,
+            MBEDTLS_SSL_TRANSPORT_STREAM,
+            MBEDTLS_SSL_PRESET_DEFAULT);
+    if (err != 0)
+    {
+        char buf[256] = {0};
+        mbedtls_strerror(err, buf, sizeof(buf));
+        ADB__ERROR("failed to configure TLS defaults");
+        ADB__INFO("reason: %s", buf);
+        return ADB_ERR_CRYPTO;
+    }
+
+    mbedtls_ssl_conf_authmode(
+            &tls->conf,
+            MBEDTLS_SSL_VERIFY_NONE);
+
+    mbedtls_ssl_conf_rng(
+            &tls->conf,
+            mbedtls_ctr_drbg_random,
+            &tls->drbg);
+
+    err = mbedtls_ssl_setup(
+            &tls->ssl,
+            &tls->conf);
+    if (err != 0)
+    {
+        char buf[256] = {0};
+        mbedtls_strerror(err, buf, sizeof(buf));
+        ADB__ERROR("failed to setup TLS");
+        ADB__INFO("reason: %s", buf);
+        return ADB_ERR_CRYPTO;
+    }
+
+    mbedtls_ssl_set_bio(
+            &tls->ssl,
+            tls,
+            adb__write_tcp,
+            adb__read_tcp,
+            NULL);
+
+    return ADB_ERR_OK;
+}
+
 adb_error_t adb_conn_create_wireless(
         adb_conn_t **conn,
         const char *host,
         const uint16_t port)
 {
+    adb_error_t ret = ADB_ERR_OK;
     adb_conn_t *tmp = NULL;
+    adb__conn_tls_t *tls = NULL;
     int err = 0;
     struct sockaddr_in addr = {0};
+
     if(!conn || !host || port == 0)
         return ADB_ERR_PARAM;
 
     tmp = adb__calloc(1, sizeof(*tmp));
     if(!tmp)
         return ADB_ERR_NO_MEM;
+    tls = &tmp->tls;
     tmp->type = ADB__CONN_WIRELESS; // for partial cleanup
 
-    tmp->sock = socket(AF_INET, SOCK_STREAM, 0);
-    if(tmp->sock < 0)
+    ADB__INFO("creating tls connection to %s:%u", host, port);
+
+    tls->sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(tls->sock < 0)
     {
-        ADB__ERROR("failed to create socket");
+        ADB__ERROR("failed to create socket for %s:%u", host, port);
         ADB__INFO("reason: %s", strerror(errno));
         adb__free(tmp);
         return ADB_ERR_NETWORK;
@@ -614,21 +803,39 @@ adb_error_t adb_conn_create_wireless(
 
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    inet_pton(AF_INET, host, &addr.sin_addr);
 
-    err = connect(tmp->sock, 
+    if(inet_pton(AF_INET, host, &addr.sin_addr) != 1)
+    {
+        ADB__ERROR("failed to parse tls host %s", host);
+        adb_conn_destroy(tmp);
+        return ADB_ERR_NETWORK;
+    }
+
+    err = connect(tls->sock,
             (struct sockaddr*)&addr, sizeof(addr));
     if(err < 0)
     {
-        ADB__ERROR("failed to connect to %s:%d", host, port);
+        ADB__ERROR("failed to connect to %s:%u", host, port);
         ADB__INFO("reason: %s", strerror(errno));
         adb_conn_destroy(tmp);
         return ADB_ERR_NETWORK;
     }
-    
-    tmp->read = adb__read_wireless;
-    tmp->write = adb__write_wireless;
+
+    ADB__INFO("connected to tls device %s:%u", host, port);
+    ret = adb__tls_init(&tmp->tls);
+    if(ret != ADB_ERR_OK)
+    {
+        adb_conn_destroy(tmp);
+        return ADB_ERR_NETWORK;
+    }
+
+    tmp->read = adb__read_tls;
+    tmp->write = adb__write_tls;
     *conn = tmp;
+
+    ADB__INFO("created tls connection successfully to %s:%u",
+            host, port);
+
     return ADB_ERR_OK;
 }
 
@@ -653,6 +860,35 @@ adb_error_t adb_conn_create_custom(
     return ADB_ERR_OK;
 }
 
+adb_error_t adb_conn_pair(
+        adb_conn_t *conn,
+        const char code[7])
+{
+    if(!conn || !code || strlen(code) != 6)
+        return ADB_ERR_PARAM;
+    if(
+            conn->type != ADB__CONN_WIRELESS && 
+            conn->type != ADB__CONN_CUSTOM)
+        return ADB_ERR_UNSUPPORTED;
+
+
+    if(conn->type == ADB__CONN_WIRELESS)
+    {
+        int err = mbedtls_ssl_handshake(&conn->tls.ssl);
+        if(err != 0)
+        {
+            char buf[256] = {0};
+            mbedtls_strerror(err, buf, sizeof(buf));
+            ADB__ERROR("failed to perform TLS handshake");
+            ADB__INFO("reason: %s", buf);
+            return ADB_ERR_NETWORK;
+        }
+    }
+
+
+    return ADB_ERR_OK;
+}
+
 void adb_conn_destroy(
         adb_conn_t *conn)
 {
@@ -661,10 +897,15 @@ void adb_conn_destroy(
 
     if(conn->type == ADB__CONN_WIRED)
     {
-            libusb_close(conn->handle);
+        libusb_close(conn->usb.handle);
     } else if(conn->type == ADB__CONN_WIRELESS) {
-        shutdown(conn->sock, SHUT_RDWR);
-        close(conn->sock);
+        mbedtls_ssl_free(&conn->tls.ssl);
+        mbedtls_ssl_config_free(&conn->tls.conf);
+        mbedtls_ctr_drbg_free(&conn->tls.drbg);
+        mbedtls_entropy_free(&conn->tls.entropy);
+
+        shutdown(conn->tls.sock, SHUT_RDWR);
+        close(conn->tls.sock);
     }
     adb__free(conn);
 }

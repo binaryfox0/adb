@@ -44,6 +44,9 @@ adb_error_t adb_conn_create_custom(
         const adb_write_callback_t write_cb,
         void *userdata);
 
+adb_error_t adb_conn_pair(
+        adb_conn_t *conn,
+        const char code[7]);
 
 void adb_conn_destroy(
         adb_conn_t *conn);

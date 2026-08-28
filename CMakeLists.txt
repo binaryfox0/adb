@@ -67,7 +67,7 @@ function(target_add_asan target)
     endif()
 endfunction()
 
-find_package(MbedTLS)
+find_package(MbedTLS REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(libusb libusb-1.0 REQUIRED IMPORTED_TARGET)

@@ -6,6 +6,7 @@ typedef enum
     ADB_ERR_OK,
     ADB_ERR_GENERIC,
     ADB_ERR_PARAM,
+    ADB_ERR_UNSUPPORTED,
     ADB_ERR_NO_MEM,
     ADB_ERR_IO,
     ADB_ERR_USB,
@@ -13,6 +14,7 @@ typedef enum
     ADB_ERR_TIMEOUT,
     ADB_ERR_DISCONNECTED,
     ADB_ERR_PROTOCOL,
+    ADB_ERR_CRYPTO,
     ADB__ERR_COUNT
 } adb_error_t;
 
