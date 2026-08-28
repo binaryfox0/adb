@@ -72,6 +72,8 @@ find_package(MbedTLS REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(libusb libusb-1.0 REQUIRED IMPORTED_TARGET)
 
+add_subdirectory(spake2)
+
 add_library(adb
     src/adb_alloc.c
     src/adb_error.c
@@ -89,7 +91,10 @@ target_add_strict_flags(adb)
 target_add_asan(adb)
 
 if(ADB_BUILD_CLI)
-    add_subdirectory(deps/aparse)
+    if(NOT TARGET aparse)
+        add_subdirectory(deps/aparse)
+    endif()
+
     add_executable(adb-cli adb-cli/main.c)
     target_link_libraries(adb-cli PRIVATE aparse adb)
     target_add_strict_flags(adb-cli)
