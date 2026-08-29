@@ -393,6 +393,59 @@ done:
     return ret;
 }
 
+static int test_invert(
+        BN_CTX *ctx,
+        const BIGNUM *p,
+        const BIGNUM *a_bn,
+        const spake2__fe_t a)
+{
+    BIGNUM *expected = NULL;
+    BIGNUM *actual_bn = NULL;
+    spake2__fe_t actual;
+    int ret = 0;
+
+    expected = BN_new();
+    actual_bn = BN_new();
+
+    if(!expected || !actual_bn)
+        goto done;
+
+    /*
+     * BN_mod_inverse() returns NULL for zero, so handle zero
+     * separately if the FE inversion API defines 0 -> 0.
+     */
+    if(BN_is_zero(a_bn)) {
+        BN_zero(expected);
+    } else {
+        if(BN_mod_inverse(expected, a_bn, p, ctx) == NULL)
+            goto done;
+    }
+
+    spake2__fe_invert(actual, a);
+
+    if(!fe_to_bn(actual_bn, actual))
+        goto done;
+
+    if(BN_nnmod(actual_bn, actual_bn, p, ctx) != 1)
+        goto done;
+
+    if(BN_cmp(actual_bn, expected) != 0) {
+        error("fe_invert");
+        print_bn("    input", a_bn);
+        print_bn("    expected", expected);
+        print_bn("    actual", actual_bn);
+        print_fe_limbs(actual);
+        goto done;
+    }
+
+    ret = 1;
+
+done:
+    BN_free(actual_bn);
+    BN_free(expected);
+    return ret;
+}
+
 int main(int argc, char **argv)
 {
     int failed = 0;
@@ -455,20 +508,18 @@ int main(int argc, char **argv)
          * Verify the test conversion independently before
          * testing arithmetic.
          */
-        if(!test_conversion(ctx, p, a_bn, a))
+        if(
+                !test_conversion(ctx, p, a_bn, a) ||
+                !test_conversion(ctx, p, b_bn, b) ||
+                !test_add(ctx, p, a_bn, b_bn, a, b) ||
+                !test_sub(ctx, p, a_bn, b_bn, a, b) ||
+                !test_mul(ctx, p, a_bn, b_bn, a, b) ||
+                !test_mul_alias_a(ctx, p, a_bn, b_bn, a, b) ||
+                !test_mul_alias_b(ctx, p, a_bn, b_bn, a, b))
             failed++;
-        if(!test_conversion(ctx, p, b_bn, b))
-            failed++;
-        if(!test_add(ctx, p, a_bn, b_bn, a, b))
-            failed++;
-        if(!test_sub(ctx, p, a_bn, b_bn, a, b))
-            failed++;
-        if(!test_mul(ctx, p, a_bn, b_bn, a, b))
-            failed++;
-        if(!test_mul_alias_a(ctx, p, a_bn, b_bn, a, b))
-            failed++;
-        if(!test_mul_alias_b(ctx, p, a_bn, b_bn, a, b))
-            failed++;
+
+        if((i % 10000) == 0) 
+            info("tests %d/%d completed", i, TEST_COUNT);        
     }
 
     info("summary: %d passed, %d failed", 
