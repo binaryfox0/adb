@@ -86,7 +86,7 @@ static void pair_command(
     (void)args;
 
     host = ip;
-    colon = strchr(ip, ':');
+    colon = (char*)(uintptr_t)strchr(ip, ':');
 
     if (!colon)
     {
