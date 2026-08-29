@@ -1175,7 +1175,6 @@ void aparse_log(
         const char *fmt,
         ...)
 {
-    va_list va;
     if(source)
     {
         fputs(source, stderr);
@@ -1188,10 +1187,14 @@ void aparse_log(
         fputs(": ", stderr);
     }
 
-    va_start(va, fmt);
-    vfprintf(stderr, fmt, va);
-    va_end(va);
-    fputc('\n', stderr);
+    if(fmt)
+    {
+        va_list va;
+        va_start(va, fmt);
+        vfprintf(stderr, fmt, va);
+        va_end(va);
+        fputc('\n', stderr);
+    }
 }
 
 aparse_status aparse_parse(

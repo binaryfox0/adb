@@ -17,11 +17,10 @@
 static int bn_set_modulus(BIGNUM *p)
 {
     int ret = 0;
-
-    if (BN_set_bit(p, 255) != 1)
+    if(BN_set_bit(p, 255) != 1)
         goto done;
 
-    if (BN_sub_word(p, 19) != 1)
+    if(BN_sub_word(p, 19) != 1)
         goto done;
 
     ret = 1;
@@ -39,22 +38,22 @@ static int bn_to_fe(spake2__fe_t r, const BIGNUM *x)
     int ret = 0;
 
     t = BN_dup(x);
-    if (t == NULL)
+    if(t == NULL)
         goto done;
 
     memset(r, 0, sizeof(*r));
 
-    for (i = 0; i < 10; i++) {
+    for(i = 0; i < 10; i++) {
         bits = (i & 1) ? 25 : 26;
 
         limb = BN_mod_word(t, ((BN_ULONG)1 << bits));
 
-        if (limb > INT32_MAX)
+        if(limb > INT32_MAX)
             goto done;
 
         r[i] = (int32_t)limb;
 
-        if (BN_rshift(t, t, bits) != 1)
+        if(BN_rshift(t, t, bits) != 1)
             goto done;
     }
 
@@ -62,14 +61,13 @@ static int bn_to_fe(spake2__fe_t r, const BIGNUM *x)
      * The input is in [0, p), so all 255 bits must fit
      * exactly into the 10 alternating-radix limbs.
      */
-    if (!BN_is_zero(t))
+    if(!BN_is_zero(t))
         goto done;
 
     ret = 1;
 
 done:
     BN_free(t);
-
     return ret;
 }
 
@@ -78,42 +76,41 @@ static int fe_to_bn(BIGNUM *r, const spake2__fe_t a)
     BIGNUM *limb = NULL;
     int shift = 0;
     int bits = 0;
-    int i = 0;
     int64_t value = 0;
     int ret = 0;
 
     limb = BN_new();
-    if (limb == NULL)
+    if(limb == NULL)
         goto done;
 
     BN_zero(r);
 
-    for (i = 0; i < 10; i++)
+    for(int i = 0; i < 10; i++)
     {
         bits = (i & 1) ? 25 : 26;
         value = a[i];
 
-        if (value >= 0) {
-            if (BN_set_word(limb, (BN_ULONG)value) != 1)
+        if(value >= 0) {
+            if(BN_set_word(limb, (BN_ULONG)value) != 1)
                 goto done;
 
-            if (shift != 0) {
-                if (BN_lshift(limb, limb, shift) != 1)
+            if(shift != 0) {
+                if(BN_lshift(limb, limb, shift) != 1)
                     goto done;
             }
 
-            if (BN_add(r, r, limb) != 1)
+            if(BN_add(r, r, limb) != 1)
                 goto done;
         } else {
-            if (BN_set_word(limb, (BN_ULONG)(-value)) != 1)
+            if(BN_set_word(limb, (BN_ULONG)(-value)) != 1)
                 goto done;
 
-            if (shift != 0) {
-                if (BN_lshift(limb, limb, shift) != 1)
+            if(shift != 0) {
+                if(BN_lshift(limb, limb, shift) != 1)
                     goto done;
             }
 
-            if (BN_sub(r, r, limb) != 1)
+            if(BN_sub(r, r, limb) != 1)
                 goto done;
         }
 
@@ -124,7 +121,6 @@ static int fe_to_bn(BIGNUM *r, const spake2__fe_t a)
 
 done:
     BN_free(limb);
-
     return ret;
 }
 
@@ -138,19 +134,15 @@ static void print_bn(const char *name, const BIGNUM *x)
     OPENSSL_free(s);
 }
 
-static void print_fe(const char *name, const spake2__fe_t x)
+static void print_fe_limbs(const spake2__fe_t x)
 {
-    int i = 0;
-
-    fprintf(stderr, "%s = [", name);
-
-    for (i = 0; i < 10; i++) {
-        if (i != 0)
+    info(NULL);
+    fprintf(stderr, "limbs = [");
+    for(int i = 0; i < SPAKE2__FE_LIMB_COUNT; i++) {
+        if(i != 0)
             fprintf(stderr, ", ");
-
         fprintf(stderr, "%" PRId32, x[i]);
     }
-
     fprintf(stderr, "]\n");
 }
 
@@ -165,10 +157,10 @@ static int check_equal(
     int ret = 0;
 
     actual_bn = BN_new();
-    if (actual_bn == NULL)
+    if(actual_bn == NULL)
         goto done;
 
-    if (!fe_to_bn(actual_bn, actual))
+    if(!fe_to_bn(actual_bn, actual))
         goto done;
 
     /*
@@ -177,16 +169,15 @@ static int check_equal(
      * BN_nnmod() is important here: BN_mod() may preserve a
      * negative remainder, while field comparison needs [0, p).
      */
-    if (BN_nnmod(actual_bn, actual_bn, p, ctx) != 1)
+    if(BN_nnmod(actual_bn, actual_bn, p, ctx) != 1)
         goto done;
 
-    if (BN_cmp(actual_bn, expected) != 0) {
-        fprintf(stderr, "FAIL: %s\n", name);
-
-        print_bn("expected", expected);
-        print_bn("actual  ", actual_bn);
-        print_fe("limbs   ", actual);
-
+    if(BN_cmp(actual_bn, expected) != 0) 
+    {
+        error("%s", name);
+        print_bn("    expected", expected);
+        print_bn("    actual", actual_bn);
+        print_fe_limbs(actual);
         goto done;
     }
 
@@ -194,7 +185,6 @@ static int check_equal(
 
 done:
     BN_free(actual_bn);
-
     return ret;
 }
 
@@ -208,22 +198,21 @@ static int test_conversion(
     int ret = 0;
 
     actual_bn = BN_new();
-    if (actual_bn == NULL)
+    if(actual_bn == NULL)
         goto done;
 
-    if (!fe_to_bn(actual_bn, actual))
+    if(!fe_to_bn(actual_bn, actual))
         goto done;
 
-    if (BN_nnmod(actual_bn, actual_bn, p, ctx) != 1)
+    if(BN_nnmod(actual_bn, actual_bn, p, ctx) != 1)
         goto done;
 
-    if (BN_cmp(actual_bn, expected) != 0) {
-        fprintf(stderr, "FAIL: conversion\n");
-
-        print_bn("expected", expected);
-        print_bn("actual  ", actual_bn);
-        print_fe("limbs   ", actual);
-
+    if(BN_cmp(actual_bn, expected) != 0) 
+    {
+        error("conversion");
+        print_bn("    expected", expected);
+        print_bn("    actual", actual_bn);
+        print_fe_limbs(actual);
         goto done;
     }
 
@@ -248,14 +237,13 @@ static int test_add(
     int ret = 0;
 
     expected = BN_new();
-    if (expected == NULL)
+    if(expected == NULL)
         goto done;
 
-    if (BN_mod_add(expected, a_bn, b_bn, p, ctx) != 1)
+    if(BN_mod_add(expected, a_bn, b_bn, p, ctx) != 1)
         goto done;
 
     spake2__fe_add(actual, a, b);
-
     ret = check_equal(
         ctx,
         p,
@@ -282,10 +270,10 @@ static int test_sub(
     int ret = 0;
 
     expected = BN_new();
-    if (expected == NULL)
+    if(expected == NULL)
         goto done;
 
-    if (BN_mod_sub(expected, a_bn, b_bn, p, ctx) != 1)
+    if(BN_mod_sub(expected, a_bn, b_bn, p, ctx) != 1)
         goto done;
 
     spake2__fe_sub(actual, a, b);
@@ -299,7 +287,6 @@ static int test_sub(
 
 done:
     BN_free(expected);
-
     return ret;
 }
 
@@ -316,10 +303,10 @@ static int test_mul(
     int ret = 0;
 
     expected = BN_new();
-    if (expected == NULL)
+    if(expected == NULL)
         goto done;
 
-    if (BN_mod_mul(expected, a_bn, b_bn, p, ctx) != 1)
+    if(BN_mod_mul(expected, a_bn, b_bn, p, ctx) != 1)
         goto done;
 
     spake2__fe_mul(actual, a, b);
@@ -333,7 +320,6 @@ static int test_mul(
 
 done:
     BN_free(expected);
-
     return ret;
 }
 
@@ -350,10 +336,10 @@ static int test_mul_alias_a(
     int ret = 0;
 
     expected = BN_new();
-    if (expected == NULL)
+    if(expected == NULL)
         goto done;
 
-    if (BN_mod_mul(expected, a_bn, b_bn, p, ctx) != 1)
+    if(BN_mod_mul(expected, a_bn, b_bn, p, ctx) != 1)
         goto done;
 
     spake2__fe_copy(actual, a);
@@ -371,6 +357,7 @@ done:
 
     return ret;
 }
+
 static int test_mul_alias_b(
         BN_CTX *ctx,
         const BIGNUM *p,
@@ -384,10 +371,10 @@ static int test_mul_alias_b(
     int ret = 0;
 
     expected = BN_new();
-    if (expected == NULL)
+    if(expected == NULL)
         goto done;
 
-    if (BN_mod_mul(expected, a_bn, b_bn, p, ctx) != 1)
+    if(BN_mod_mul(expected, a_bn, b_bn, p, ctx) != 1)
         goto done;
 
     spake2__fe_copy(actual, b);
@@ -406,80 +393,86 @@ done:
     return ret;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    int failed = 0;
     BN_CTX *ctx = NULL;
     BIGNUM *p = NULL;
     BIGNUM *a_bn = NULL;
     BIGNUM *b_bn = NULL;
     spake2__fe_t a;
     spake2__fe_t b;
-    int i = 0;
     int ret = 1;
+
+    aparse_parse(
+            argc, argv, 
+            NULL, NULL, 
+            "field-element test");
 
     ctx = BN_CTX_new();
     p = BN_new();
     a_bn = BN_new();
     b_bn = BN_new();
 
-    if (ctx == NULL ||
-        p == NULL ||
-        a_bn == NULL ||
-        b_bn == NULL) {
-        fprintf(stderr, "OpenSSL allocation failure\n");
+    if(!ctx || !p || !a_bn || !b_bn)
+    {
+        info("failed to allocate openssl types\n");
         goto done;
     }
 
-    if (!bn_set_modulus(p)) {
-        fprintf(stderr, "failed to construct modulus\n");
+    if(!bn_set_modulus(p)) {
+        error("failed to construct modulus\n");
         goto done;
     }
 
-    printf("Testing GF(2^255 - 19)...\n");
-
-    for (i = 0; i < TEST_COUNT; i++) {
-        if (BN_rand_range(a_bn, p) != 1)
+    for(int i = 0; i < TEST_COUNT; i++) 
+    {
+        if(BN_rand_range(a_bn, p) != 1)
+        {
+            error("failed to generate random BN a");
             goto done;
+        }
 
-        if (BN_rand_range(b_bn, p) != 1)
+        if(BN_rand_range(b_bn, p) != 1)
+        {
+            error("failed to generate random BN b");
             goto done;
+        }
 
-        if (!bn_to_fe(a, a_bn))
+        if(!bn_to_fe(a, a_bn))
+        {
+            error("failed to convert BN a into FE a");
             goto done;
+        }
 
-        if (!bn_to_fe(b, b_bn))
+        if(!bn_to_fe(b, b_bn))
+        {
+            error("failed to convert BN b into FE b");
             goto done;
+        }
 
         /*
          * Verify the test conversion independently before
          * testing arithmetic.
          */
-        if (!test_conversion(ctx, p, a_bn, a))
-            goto done;
-
-        if (!test_conversion(ctx, p, b_bn, b))
-            goto done;
-
-        if (!test_add(ctx, p, a_bn, b_bn, a, b))
-            goto done;
-
-        if (!test_sub(ctx, p, a_bn, b_bn, a, b))
-            goto done;
-
-        if (!test_mul(ctx, p, a_bn, b_bn, a, b))
-            goto done;
-
-        if (!test_mul_alias_a(ctx, p, a_bn, b_bn, a, b))
-            goto done;
-
-        if (!test_mul_alias_b(ctx, p, a_bn, b_bn, a, b))
-            goto done;
-
-        if ((i + 1) % 10000 == 0)
-            printf("  %d/%d\n", i + 1, TEST_COUNT);
+        if(!test_conversion(ctx, p, a_bn, a))
+            failed++;
+        if(!test_conversion(ctx, p, b_bn, b))
+            failed++;
+        if(!test_add(ctx, p, a_bn, b_bn, a, b))
+            failed++;
+        if(!test_sub(ctx, p, a_bn, b_bn, a, b))
+            failed++;
+        if(!test_mul(ctx, p, a_bn, b_bn, a, b))
+            failed++;
+        if(!test_mul_alias_a(ctx, p, a_bn, b_bn, a, b))
+            failed++;
+        if(!test_mul_alias_b(ctx, p, a_bn, b_bn, a, b))
+            failed++;
     }
 
-    printf("PASS: %d tests\n", TEST_COUNT);
+    info("summary: %d passed, %d failed", 
+            TEST_COUNT - failed, failed);
 
     ret = 0;
 

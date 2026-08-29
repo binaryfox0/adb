@@ -8,290 +8,115 @@
 #include <aparse.h>
 #include "spake2_sha512.h"
 
+#include <openssl/sha.h>
+#include <openssl/rand.h>
+
 #define error aparse_prog_error
-#define warn aparse_prog_warn
 #define info aparse_prog_info
 
-#define SHA512_TEST_MAX_MESSAGE 1024
+#define TEST_COUNT 100000
 
-static char *trim(char *str)
+static const char base64_table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789+/";
+
+static char *base64_encode(
+        const uint8_t *data, 
+        const size_t size)
 {
-    char *end = NULL;
+    size_t i = 0, j = 0;
+    size_t out_len = 0;
+    char *encoded = 0;
 
-    while(isspace((unsigned char)*str))
-        str++;
+    out_len = 4 * ((size + 2) / 3);
+    encoded = malloc(out_len + 1);
+    if (!encoded)
+        return NULL;
 
-    end = str + strlen(str);
-
-    while(end > str && isspace((unsigned char)end[-1]))
-        end--;
-
-    *end = '\0';
-
-    return str;
-}
-
-static int parse_key_value(
-        char *line,
-        char **key,
-        char **value)
-{
-    char *equals = NULL;
-
-    line = trim(line);
-
-    if(*line == '\0')
-        return 0;
-
-    equals = strchr(line, '=');
-    if(!equals)
-        return 0;
-
-    *equals = '\0';
-
-    *key = trim(line);
-    *value = trim(equals + 1);
-
-    if(**key == '[')
+    while (i < size) 
     {
-        (*key)++;
+        unsigned int a = data[i++];
+        unsigned int b = (i < size) ? data[i++] : 0;
+        unsigned int c = (i < size) ? data[i++] : 0;
 
-        *key = trim(*key);
+        unsigned int triple = (a << 16) | (b << 8) | c;
 
-        if((*key)[strlen(*key) - 1] == ']')
-            (*key)[strlen(*key) - 1] = '\0';
-
-        *key = trim(*key);
+        encoded[j++] = base64_table[(triple >> 18) & 0x3F];
+        encoded[j++] = base64_table[(triple >> 12) & 0x3F];
+        encoded[j++] = (i - 1 < size)
+                     ? base64_table[(triple >> 6) & 0x3F]
+                     : '=';
+        encoded[j++] = (i < size + 1)
+                     ? base64_table[triple & 0x3F]
+                     : '=';
     }
 
-    if(**key == '\0')
-        return 0;
-
-    return 1;
+    encoded[j] = '\0';
+    return encoded;
 }
 
-static int hex_value(const char c)
+static void print_data(
+        const uint8_t *data,
+        const size_t size)
 {
-    if(c >= '0' && c <= '9')
-        return c - '0';
-
-    if(c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-
-    if(c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-
-    return -1;
+    char *base64 = base64_encode(data, size);
+    fprintf(stderr, "data = %s", base64);
+    free(base64);
 }
 
-static int hex_decode(
-        const char *str,
-        uint8_t *out,
-        const size_t out_size,
-        size_t *out_len)
+static void print_digest(
+        const char *name,
+        const uint8_t *digest)
 {
-    size_t len = 0;
-    size_t i = 0;
-
-    int hi = 0;
-    int lo = 0;
-
-    len = strlen(str);
-
-    if(len & 1)
-        return 0;
-
-    if(len / 2 > out_size)
-        return 0;
-
-    for(i = 0; i < len; i += 2)
-    {
-        hi = hex_value(str[i]);
-        lo = hex_value(str[i + 1]);
-
-        if(hi < 0 || lo < 0)
-            return 0;
-
-        out[i / 2] = (uint8_t)((hi << 4) | lo);
-    }
-
-    *out_len = len / 2;
-
-    return 1;
-}
-
-static int digest_matches(
-        const uint8_t *digest,
-        const size_t digest_len,
-        const char *expected)
-{
-    size_t i = 0;
-
-    int hi = 0;
-    int lo = 0;
-
-    if(strlen(expected) != digest_len * 2)
-        return 0;
-
-    for(i = 0; i < digest_len; i++)
-    {
-        hi = hex_value(expected[i * 2]);
-        lo = hex_value(expected[i * 2 + 1]);
-
-        if(hi < 0 || lo < 0)
-            return 0;
-
-        if(digest[i] != (uint8_t)((hi << 4) | lo))
-            return 0;
-    }
-
-    return 1;
-}
-
-static int run_tests(FILE *file)
-{
-    size_t line_idx = 0;
-    char line[4096] = {0};
-
-    char *key = NULL;
-    char *value = NULL;
-
-    uint8_t message[SHA512_TEST_MAX_MESSAGE] = {0};
-    uint8_t digest[SPAKE2__SHA512_DIGEST_LEN] = {0};
-
-    size_t msg_len = 0;
-    size_t expected_msg_len = 0;
-
-    size_t tests = 0;
-    size_t passed = 0;
-    size_t failed = 0;
-
-    unsigned long digest_len = 0;
-
-    while(fgets(line, sizeof(line), file))
-    {
-        line_idx++;
-        if(!parse_key_value(line, &key, &value))
-            continue;
-
-        if(strcmp(key, "L") == 0)
-        {
-            digest_len = strtoul(value, NULL, 10);
-            if(digest_len != SPAKE2__SHA512_DIGEST_LEN)
-            {
-                error("unexpected digest length: %lu", digest_len);
-                return 1;
-            }
-            continue;
-        }
-
-        if(strcmp(key, "Len") == 0)
-        {
-            unsigned long length_bits = strtoul(value, NULL, 10);
-            if(length_bits & 7)
-            {
-                error("message length is not byte aligned");
-                return 0;
-            }
-
-            expected_msg_len = length_bits / 8;
-            if(expected_msg_len > sizeof(message))
-            {
-                error("message is too large: %zu bytes",
-                    expected_msg_len);
-                return 0;
-            }
-            continue;
-        }
-
-        if(strcmp(key, "Msg") == 0)
-        {
-            if(!hex_decode(
-                    value,
-                    message,
-                    sizeof(message),
-                    &msg_len))
-            {
-                error("invalid hexadecimal message");
-                return 0;
-            }
-
-            if(expected_msg_len == 0) 
-            {
-                msg_len = 0;
-                continue;
-            }
-
-            if(msg_len != expected_msg_len)
-            {
-                error("message length mismatch: expected %zu, got %zu",
-                    expected_msg_len, msg_len);
-                return 1;
-            }
-
-            continue;
-        }
-
-        if(strcmp(key, "MD") == 0)
-        {
-            tests++;
-
-            memset(digest, 0, sizeof(digest));
-            spake2__sha512(message, msg_len, digest);
-            if(digest_matches(digest, sizeof(digest),
-                        value))
-                passed++;
-            else
-            {
-                failed++;
-                error("FAIL: test %zu, len: %zu bytes, line %zu",
-                    tests, msg_len, line_idx);
-            }
-
-            continue;
-        }
-    }
-
-    info("summary: %zu tests, %zu passed, %zu failed",
-        tests, passed, failed);
-
-    return failed == 0;
+    info(NULL);
+    fprintf(stderr, "%s = ", name);
+    for(int i = 0; i < SPAKE2__SHA512_DIGEST_LEN; i++)
+        fprintf(stderr, "%02x", digest[i]);
+    fputc('\n', stderr);
 }
 
 int main(int argc, char **argv)
 {
-    FILE *file = NULL;
-    const char *path = NULL;
+    int failed = 0;
+    aparse_parse(
+            argc, argv, 
+            NULL, NULL, 
+            "SHA512 test");
 
-    aparse_arg main_args[] =
+    for(int i = 0; i < TEST_COUNT; i++)
     {
-        aparse_arg_string(
-                "path",
-                &path, 0,
-                "Path to SHA512ShortMsg.rsp"),
-        aparse_arg_end_marker
-    };
+        uint8_t buf[1024] = {0};
+        uint8_t actual[SPAKE2__SHA512_DIGEST_LEN] = {0};
+        uint8_t expected[SHA512_DIGEST_LENGTH] = {0};
 
-    if(aparse_parse(
-                argc, argv,
-                main_args, NULL,
-                "SHA512 tests") != APARSE_STATUS_OK)
-        return 1;
+        if(sizeof(expected) != sizeof(actual))
+        {
+            error("SHA512 digest length mismatch");
+            return 1;
+        }
 
-    file = fopen(path, "r");
-    if(!file)
-    {
-        error("failed to open \"%s\"", path);
-        info("reason: %s", strerror(errno));
-        return 1;
+        if(RAND_bytes(buf, sizeof(buf)) != 1)
+        {
+            error("failed to generate random bytes");
+            return 1;
+        }
+
+        spake2__sha512(buf, sizeof(buf), actual);
+        SHA512(buf, sizeof(buf), expected);
+
+        if(memcmp(actual, expected, sizeof(actual)) != 0)
+        {
+            print_data(buf, sizeof(buf));
+            print_digest("    expected", expected);
+            print_digest("    actual", actual);
+            failed++;
+        }
     }
+    
+    info("summary: %d passed, %d failed", 
+            TEST_COUNT - failed, failed);
 
-    if(!run_tests(file))
-    {
-        fclose(file);
-        return 1;
-    }
 
-    fclose(file);
     return 0;
 }
