@@ -7,6 +7,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <aparse.h>
+
+#define info aparse_prog_info
+#define error aparse_prog_error
+
 #define TEST_COUNT 100000
 
 static int bn_set_modulus(BIGNUM *p)
@@ -83,7 +88,8 @@ static int fe_to_bn(BIGNUM *r, const spake2__fe_t a)
 
     BN_zero(r);
 
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 10; i++)
+    {
         bits = (i & 1) ? 25 : 26;
         value = a[i];
 
@@ -124,14 +130,11 @@ done:
 
 static void print_bn(const char *name, const BIGNUM *x)
 {
-    char *s = NULL;
-
-    s = BN_bn2hex(x);
-    if (s == NULL)
+    char *s = BN_bn2hex(x);
+    if(!s)
         return;
 
-    fprintf(stderr, "%s = %s\n", name, s);
-
+    info("%s = %s\n", name, s);
     OPENSSL_free(s);
 }
 
