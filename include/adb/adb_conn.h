@@ -48,6 +48,9 @@ adb_error_t adb_conn_pair(
         adb_conn_t *conn,
         const char code[7]);
 
+adb_error_t adb_conn_handshake(
+        adb_conn_t *conn);
+
 void adb_conn_destroy(
         adb_conn_t *conn);
 

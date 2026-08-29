@@ -23,6 +23,7 @@
 #include "adb_alloc_priv.h"
 #include "adb_lookup.h"
 #include "adb_error_priv.h"
+#include "adb_packet.h"
 
 #define ADB__INTERFACE_CLASS    0xFF
 #define ADB__INTERFACE_SUBCLASS 0x42
@@ -85,6 +86,7 @@ typedef struct adb_conn
     adb_read_callback_t read;
     adb_write_callback_t write;
 } adb_conn_t;
+
 
 const char *adb_conn_info_get_manufacturer(
         const adb_usb_info_t *conn_info) {
@@ -464,9 +466,6 @@ adb_error_t adb_query_usb(
 
     return ret;
 }
-
-#define ADB__COMMAND(a, b, c, d) ((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
-#define ADB__CNXN ADB__COMMAND('C', 'N', 'X', 'N')
 
 static adb_error_t adb__read_libusb(
         void *userdata,
@@ -887,6 +886,57 @@ adb_error_t adb_conn_pair(
 
 
     return ADB_ERR_OK;
+}
+
+#define ADB__MAX_SUPPORTED_VER 0x01000001
+#define ADB__MAX_PAYLOAD_SIZE (1024 * 1024)
+
+static adb_error_t adb__send_packet(
+        adb_conn_t *conn,
+        adb__packet_t *pkt)
+{
+    const uint8_t *payload_data = NULL;
+    uint32_t sum = 0;
+    adb_error_t res = ADB_ERR_OK;
+    if(!conn || !pkt)
+        return ADB_ERR_PARAM;
+
+    payload_data = pkt->payload;
+    for(uint32_t i = 0; i < pkt->msg.data_length; i++)
+        sum += payload_data[i];
+
+    pkt->msg.data_check = sum;
+    pkt->msg.magic = pkt->msg.command ^ 0xffffffff;
+
+    res = conn->write(conn->userdata, &pkt->msg, sizeof(pkt->msg));
+    if(res != ADB_ERR_OK)
+        return res;
+
+    if(pkt->msg.data_length == 0)
+        return ADB_ERR_OK;
+
+    res = conn->write(conn->userdata, pkt->payload, pkt->msg.data_length);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    return ADB_ERR_OK;
+}
+
+adb_error_t adb_conn_handshake(
+        adb_conn_t *conn)
+{
+    const char conn_str[] = 
+        "host::";
+    adb__packet_t pkt = {0};
+    if(!conn)
+        return ADB_ERR_PARAM;
+
+    pkt.msg.command = ADB__CMD_CNXN;
+    pkt.msg.arg0 = ADB__MAX_SUPPORTED_VER;
+    pkt.msg.arg1 = ADB__MAX_PAYLOAD_SIZE;
+    pkt.msg.data_length = sizeof(conn_str) - 1;
+
+    return adb__send_packet(conn, &pkt);
 }
 
 void adb_conn_destroy(
