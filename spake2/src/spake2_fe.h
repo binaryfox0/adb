@@ -1,8 +1,9 @@
-#ifndef FE_H
-#define FE_H
+#ifndef SPAKE2_FE_H
+#define SPAKE2_FE_H
 
-#include "fixedint.h"
+#include <stdint.h>
 
+#define SPAKE2__FE_LIMB_COUNT 10
 
 /*
     fe means field element.
@@ -13,29 +14,80 @@
 */
 
 
-typedef int32_t fe[10];
+typedef int32_t spake2__fe_t[SPAKE2__FE_LIMB_COUNT];
 
 
-void fe_0(fe h);
-void fe_1(fe h);
+void spake2__fe_0(
+        spake2__fe_t h);
 
-void fe_frombytes(fe h, const unsigned char *s);
-void fe_tobytes(unsigned char *s, const fe h);
+void spake2__fe_1(
+        spake2__fe_t h);
 
-void fe_copy(fe h, const fe f);
-int fe_isnegative(const fe f);
-int fe_isnonzero(const fe f);
-void fe_cmov(fe f, const fe g, unsigned int b);
-void fe_cswap(fe f, fe g, unsigned int b);
+void spake2__fe_frombytes(
+        spake2__fe_t h, 
+        const unsigned char *s);
 
-void fe_neg(fe h, const fe f);
-void fe_add(fe h, const fe f, const fe g);
-void fe_invert(fe out, const fe z);
-void fe_sq(fe h, const fe f);
-void fe_sq2(fe h, const fe f);
-void fe_mul(fe h, const fe f, const fe g);
-void fe_mul121666(fe h, fe f);
-void fe_pow22523(fe out, const fe z);
-void fe_sub(fe h, const fe f, const fe g);
+void spake2__fe_tobytes(
+        unsigned char *s, 
+        const spake2__fe_t h);
+
+void spake2__fe_copy(
+        spake2__fe_t h, 
+        const spake2__fe_t f);
+
+int spake2__fe_isnegative(
+        const spake2__fe_t f);
+
+int spake2__fe_isnonzero(
+        const spake2__fe_t f);
+
+void spake2__fe_cmov(
+        spake2__fe_t f, 
+        const spake2__fe_t g,
+        unsigned int b);
+
+void spake2__fe_cswap(
+        spake2__fe_t f, 
+        spake2__fe_t g, 
+        unsigned int b);
+
+void spake2__fe_neg(
+        spake2__fe_t h, 
+        const spake2__fe_t f);
+
+void spake2__fe_add(
+        spake2__fe_t h, 
+        const spake2__fe_t f, 
+        const spake2__fe_t g);
+
+void spake2__fe_invert(
+        spake2__fe_t out, 
+        const spake2__fe_t z);
+
+void spake2__fe_sq(
+        spake2__fe_t h, 
+        const spake2__fe_t f);
+
+void spake2__fe_sq2(
+        spake2__fe_t h, 
+        const spake2__fe_t f);
+
+void spake2__fe_mul(
+        spake2__fe_t h, 
+        const spake2__fe_t f, 
+        const spake2__fe_t g);
+
+void spake2__fe_mul121666(
+        spake2__fe_t h, 
+        spake2__fe_t f);
+
+void spake2__fe_pow22523(
+        spake2__fe_t out, 
+        const spake2__fe_t z);
+
+void spake2__fe_sub(
+        spake2__fe_t h, 
+        const spake2__fe_t f, 
+        const spake2__fe_t g);
 
 #endif
