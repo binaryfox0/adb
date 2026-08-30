@@ -32,7 +32,7 @@ Output:
 */
 
 void spake2__sc_reduce(
-        uint8_t *s) 
+        spake2__sc_wide_t s) 
 {
     int64_t carry = 0;
     int64_t 
@@ -277,6 +277,18 @@ void spake2__sc_muladd(
         const uint8_t *c) 
 {
     int64_t 
+        s0  = 0, s1  = 0, s2  = 0,
+        s3  = 0, s4  = 0, s5  = 0,
+        s6  = 0, s7  = 0, s8  = 0,
+        s9  = 0, s10 = 0, s11 = 0,
+        s12 = 0, s13 = 0, s14 = 0,
+        s15 = 0, s16 = 0, s17 = 0,
+        s18 = 0, s19 = 0, s20 = 0,
+        s21 = 0, s22 = 0, s23 = 0;
+
+    int64_t carry = 0;
+
+    int64_t 
         a0  = 2097151 &  spake2__load3(a),
         a1  = 2097151 & (spake2__load4(a + 2)  >> 5),
         a2  = 2097151 & (spake2__load3(a + 5)  >> 2),
@@ -316,18 +328,6 @@ void spake2__sc_muladd(
         c9  = 2097151 & (spake2__load4(c + 23) >> 5),
         c10 = 2097151 & (spake2__load3(c + 26) >> 2),
         c11 = (spake2__load4(c + 28) >> 7);
-
-    int64_t 
-        s0  = 0, s1  = 0, s2  = 0,
-        s3  = 0, s4  = 0, s5  = 0,
-        s6  = 0, s7  = 0, s8  = 0,
-        s9  = 0, s10 = 0, s11 = 0,
-        s12 = 0, s13 = 0, s14 = 0,
-        s15 = 0, s16 = 0, s17 = 0,
-        s18 = 0, s19 = 0, s20 = 0,
-        s21 = 0, s22 = 0, s23 = 0;
-
-    int64_t carry = 0;
 
     s0 = c0 + a0 * b0;
     s1 = c1 + a0 * b1 + a1 * b0;

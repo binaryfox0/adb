@@ -360,10 +360,10 @@ void spake2__fe_invert(
         spake2__fe_t out, 
         const spake2__fe_t z) 
 {
-    spake2__fe_t t0;
-    spake2__fe_t t1;
-    spake2__fe_t t2;
-    spake2__fe_t t3;
+    spake2__fe_t t0 = {0};
+    spake2__fe_t t1 = {0};
+    spake2__fe_t t2 = {0};
+    spake2__fe_t t3 = {0};
 
     spake2__fe_sq(t0, z);
     spake2__fe_sq(t1, t0);

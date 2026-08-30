@@ -354,7 +354,6 @@ static int test_mul_alias_a(
 
 done:
     BN_free(expected);
-
     return ret;
 }
 
