@@ -4,7 +4,11 @@ project(spake2)
 option(SPAKE2_BUILD_TESTS "Build spake2 tests" OFF)
 
 add_library(spake2
-    src/spake2_sha512.c)
+    src/spake2_sha512.c
+    src/spake2_fe.c
+    src/spake2_ge.c
+    src/spake2_sc.c
+    src/spake2.c)
 target_include_directories(spake2 PUBLIC include/)
 
 if(SPAKE2_BUILD_TESTS)

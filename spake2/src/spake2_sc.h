@@ -14,6 +14,10 @@
 typedef uint8_t spake2__sc_t[SPAKE2__SC_LIMB_COUNT];
 typedef uint8_t spake2__sc_wide_t[SPAKE2__SC_WIDE_LIMB_COUNT];
 
+void spake2__sc_copy(
+        spake2__sc_t s,
+        const spake2__sc_t a);
+
 void spake2__sc_reduce(
         spake2__sc_wide_t s);
 

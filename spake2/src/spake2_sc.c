@@ -22,6 +22,80 @@ static uint64_t spake2__load4(const uint8_t *in) {
 }
 
 /*
+    s = a
+*/
+void spake2__sc_copy(
+        spake2__sc_t s,
+        const spake2__sc_t a)
+{
+    int32_t a0 = a[0];
+    int32_t a1 = a[1];
+    int32_t a2 = a[2];
+    int32_t a3 = a[3];
+    int32_t a4 = a[4];
+    int32_t a5 = a[5];
+    int32_t a6 = a[6];
+    int32_t a7 = a[7];
+    int32_t a8 = a[8];
+    int32_t a9 = a[9];
+    int32_t a10 = a[10];
+    int32_t a11 = a[11];
+    int32_t a12 = a[12];
+    int32_t a13 = a[13];
+    int32_t a14 = a[14];
+    int32_t a15 = a[15];
+    int32_t a16 = a[16];
+    int32_t a17 = a[17];
+    int32_t a18 = a[18];
+    int32_t a19 = a[19];
+    int32_t a20 = a[20];
+    int32_t a21 = a[21];
+    int32_t a22 = a[22];
+    int32_t a23 = a[23];
+    int32_t a24 = a[24];
+    int32_t a25 = a[25];
+    int32_t a26 = a[26];
+    int32_t a27 = a[27];
+    int32_t a28 = a[28];
+    int32_t a29 = a[29];
+    int32_t a30 = a[30];
+    int32_t a31 = a[31];
+    
+    s[0] = a0;
+    s[1] = a1;
+    s[2] = a2;
+    s[3] = a3;
+    s[4] = a4;
+    s[5] = a5;
+    s[6] = a6;
+    s[7] = a7;
+    s[8] = a8;
+    s[9] = a9;
+    s[10] = a10;
+    s[11] = a11;
+    s[12] = a12;
+    s[13] = a13;
+    s[14] = a14;
+    s[15] = a15;
+    s[16] = a16;
+    s[17] = a17;
+    s[18] = a18;
+    s[19] = a19;
+    s[20] = a20;
+    s[21] = a21;
+    s[22] = a22;
+    s[23] = a23;
+    s[24] = a24;
+    s[25] = a25;
+    s[26] = a26;
+    s[27] = a27;
+    s[28] = a28;
+    s[29] = a29;
+    s[30] = a30;
+    s[31] = a31;
+}
+
+/*
 Input:
   s[0]+256*s[1]+...+256^63*s[63] = s
 

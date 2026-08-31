@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#define SPAKE2__SHA512_ROUNDS 80
+#define SPAKE2__SHA512_ROUND_COUNT 80
 
 typedef struct
 {
@@ -14,7 +14,7 @@ typedef struct
     size_t   block_len;
 } spake2__sha512_ctx_t;
 
-static const uint64_t spake2__sha512_k[SPAKE2__SHA512_ROUNDS] =
+static const uint64_t spake2__sha512_k[SPAKE2__SHA512_ROUND_COUNT] =
 {
     UINT64_C(0x428a2f98d728ae22), UINT64_C(0x7137449123ef65cd),
     UINT64_C(0xb5c0fbcfec4d3b2f), UINT64_C(0xe9b5dba58189dbbc),
@@ -143,7 +143,7 @@ static void spake2__sha512_transform(
         spake2__sha512_ctx_t *ctx,
         const uint8_t block[128])
 {
-    uint64_t w[SPAKE2__SHA512_ROUNDS] = {0};
+    uint64_t w[SPAKE2__SHA512_ROUND_COUNT] = {0};
     uint64_t 
         a = 0, b = 0, c = 0, 
         d = 0, e = 0, f = 0, 
@@ -153,7 +153,7 @@ static void spake2__sha512_transform(
     for(int i = 0; i < 16; i++)
         w[i] = spake2__sha512_load64(block + i * 8);
 
-    for(int i = 16; i < SPAKE2__SHA512_ROUNDS; i++)
+    for(int i = 16; i < SPAKE2__SHA512_ROUND_COUNT; i++)
     {
         w[i] = spake2__sha512_small_sigma1(w[i - 2])
              + w[i - 7]
@@ -170,7 +170,7 @@ static void spake2__sha512_transform(
     g = ctx->h[6];
     h = ctx->h[7];
 
-    for(int i = 0; i < SPAKE2__SHA512_ROUNDS; i++)
+    for(int i = 0; i < SPAKE2__SHA512_ROUND_COUNT; i++)
     {
         t1 = h
             + spake2__sha512_big_sigma1(e)
@@ -285,7 +285,7 @@ static void spake2__sha512_finish(
 void spake2__sha512(
         const void *data,
         const size_t len,
-        uint8_t out[SPAKE2__SHA512_DIGEST_LEN])
+        uint8_t out[SPAKE2__SHA512_DIGEST_LENGTH])
 {
     spake2__sha512_ctx_t ctx = {0};
 
