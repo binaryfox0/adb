@@ -29,17 +29,20 @@ adb_error_t adb_query_usb(
         adb_usb_info_t ***usb_infos,
         size_t *usb_count);
 
-adb_error_t adb_conn_create_from_info(
+adb_error_t adb_conn_create_wired(
         adb_conn_t **conn,
-        const adb_usb_info_t *conn_info);
+        adb_ctx_t *ctx,
+        const adb_usb_info_t *usb_info);
 
 adb_error_t adb_conn_create_wireless(
         adb_conn_t **conn,
+        adb_ctx_t *ctx,
         const char *ip,
         const uint16_t port);
 
 adb_error_t adb_conn_create_custom(
         adb_conn_t **conn,
+        adb_ctx_t *ctx,
         const adb_read_callback_t read_cb,
         const adb_write_callback_t write_cb,
         void *userdata);

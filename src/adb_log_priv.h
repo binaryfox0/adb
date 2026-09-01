@@ -25,4 +25,8 @@ ADB__PRINTF(2, 3) void adb__log(
         ADB__PRINTF_FMT const char *fmt,
         ...);
 
+void adb__log_err_mbedtls(
+        const char *label,
+        const int err);
+
 #endif

@@ -10,7 +10,7 @@ adb_error_t adb_ctx_create(
         adb_ctx_t **ctx)
 {
     adb_ctx_t *tmp = NULL;
-    int res = 0;
+    int err = 0;
     if(!ctx)
         return ADB_ERR_PARAM;
 
@@ -18,15 +18,31 @@ adb_error_t adb_ctx_create(
     if(!tmp)
         return ADB_ERR_NO_MEM;
 
-    res = libusb_init(&tmp->usb);
-    if(res != 0)
+    err = libusb_init(&tmp->usb);
+    if(err != 0)
     {
         ADB__ERROR("failed to create libusb context");
         ADB__INFO("reason: %s (%s)", 
-                libusb_error_name(res), 
-                libusb_strerror(res));
-        adb__free(tmp);
+                libusb_error_name(err), 
+                libusb_strerror(err));
+        adb_ctx_destroy(tmp);
         return ADB_ERR_USB;
+    }
+
+    mbedtls_entropy_init(&tmp->entropy);
+    mbedtls_ctr_drbg_init(&tmp->drbg);
+
+    err = mbedtls_ctr_drbg_seed(
+            &tmp->drbg,
+            mbedtls_entropy_func,
+            &tmp->entropy,
+            NULL,
+            0);
+    if(err != 0)
+    {
+        adb__log_err_mbedtls("failed to create random generator", err);
+        adb_ctx_destroy(tmp);
+        return ADB_ERR_CRYPTO;
     }
 
     *ctx = tmp;
@@ -38,6 +54,9 @@ void adb_ctx_destroy(
 {
     if(!ctx)
         return;
+    
+    mbedtls_entropy_free(&ctx->entropy);
+    mbedtls_ctr_drbg_free(&ctx->drbg);
 
     for(size_t i = 0; i < ctx->infos_capacity; i++)
         adb__conn_info_destroy(ctx->conn_infos[i]);

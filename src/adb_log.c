@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#include <mbedtls/error.h>
+
 static adb_log_callback_t adb__log_callback = NULL;
 static void *adb__log_userdata = NULL;
 static adb_log_level_t adb__log_level = ADB_LOG_ERROR;
@@ -50,4 +52,14 @@ void adb__log(
     adb__log_callback(
             adb__log_userdata, level, 
             buffer);
+}
+
+void adb__log_err_mbedtls(
+        const char *label,
+        const int err)
+{
+    char buf[256] = {0};
+    mbedtls_strerror(err, buf, sizeof(buf));
+    ADB__ERROR("%s", label);
+    ADB__INFO("reason: %s", buf);
 }
