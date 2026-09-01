@@ -6,14 +6,6 @@
 
 #define SPAKE2__SHA512_ROUND_COUNT 80
 
-typedef struct
-{
-    uint64_t h[8];
-    uint64_t bitlen[2];
-    uint8_t  block[128];
-    size_t   block_len;
-} spake2__sha512_ctx_t;
-
 static const uint64_t spake2__sha512_k[SPAKE2__SHA512_ROUND_COUNT] =
 {
     UINT64_C(0x428a2f98d728ae22), UINT64_C(0x7137449123ef65cd),
@@ -201,7 +193,7 @@ static void spake2__sha512_transform(
     ctx->h[7] += h;
 }
 
-static void spake2__sha512_init(
+void spake2__sha512_init(
         spake2__sha512_ctx_t *ctx)
 {
     ctx->h[0] = UINT64_C(0x6a09e667f3bcc908);
@@ -228,20 +220,21 @@ static void spake2__sha512_add_bits(
         ctx->bitlen[0]++;
 }
 
-static void spake2__sha512_update(
+void spake2__sha512_update(
         spake2__sha512_ctx_t *ctx,
         const void *data,
-        size_t len)
+        const size_t len)
 {
     const uint8_t *p = (const uint8_t *)data;
-    while(len != 0)
+    size_t unprocessed = len;
+    while(unprocessed != 0)
     {
         size_t n = sizeof(ctx->block) - ctx->block_len;
-        if (n > len) n = len;
+        if (n > unprocessed) n = unprocessed;
 
         memcpy(ctx->block + ctx->block_len, p, n);
         ctx->block_len += n;
-        p += n, len -= n;
+        p += n, unprocessed -= n;
 
         if (ctx->block_len == sizeof(ctx->block))
         {
@@ -252,9 +245,9 @@ static void spake2__sha512_update(
     }
 }
 
-static void spake2__sha512_finish(
+void spake2__sha512_finish(
         spake2__sha512_ctx_t *ctx,
-        uint8_t out[SPAKE2__SHA512_DIGEST_LEN])
+        uint8_t out[SPAKE2__SHA512_DIGEST_LENGTH])
 {
     size_t n = 0;
     spake2__sha512_add_bits(

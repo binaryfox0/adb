@@ -5,7 +5,7 @@
 
 
 /*
-spake2__ge means group element.
+ge means group element.
 
 Here the group is the set of pairs (x,y) of field elements (see spake2_fe.h)
 satisfying -x^2 + y^2 = 1 + d x^2y^2
@@ -59,6 +59,10 @@ void spake2__ge_tobytes(
         unsigned char *s,
         const spake2__ge_p2 *h);
 
+int spake2__ge_frombytes_vartime(
+        spake2__ge_p3 *h,
+        const uint8_t s[32]);
+
 int spake2__ge_frombytes_negate_vartime(
         spake2__ge_p3 *h,
         const unsigned char *s);
@@ -89,10 +93,19 @@ void spake2__ge_msub(
         const spake2__ge_p3 *p,
         const spake2__ge_precomp *q);
 
+void spake2__ge_scalarmult(
+        spake2__ge_p2 *r,
+        const unsigned char *scalar,
+        const spake2__ge_p3 *A);
+
 void spake2__ge_scalarmult_base(
         spake2__ge_p3 *h,
         const unsigned char *a);
 
+void spake2__ge_scalarmult_small_precomp(
+        spake2__ge_p3 *h,
+        const uint8_t a[32],
+        const uint8_t precomp_table[15 * 2 * 32]);
 
 void spake2__ge_p1p1_to_p2(
         spake2__ge_p2 *r,

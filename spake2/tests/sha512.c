@@ -71,7 +71,7 @@ static void print_digest(
 {
     info(NULL);
     fprintf(stderr, "%s = ", name);
-    for(int i = 0; i < SPAKE2__SHA512_DIGEST_LEN; i++)
+    for(int i = 0; i < SPAKE2__SHA512_DIGEST_LENGTH; i++)
         fprintf(stderr, "%02x", digest[i]);
     fputc('\n', stderr);
 }
@@ -87,7 +87,7 @@ int main(int argc, char **argv)
     for(int i = 0; i < TEST_COUNT; i++)
     {
         uint8_t buf[1024] = {0};
-        uint8_t actual[SPAKE2__SHA512_DIGEST_LEN] = {0};
+        uint8_t actual[SPAKE2__SHA512_DIGEST_LENGTH] = {0};
         uint8_t expected[SHA512_DIGEST_LENGTH] = {0};
 
         if(sizeof(expected) != sizeof(actual))
