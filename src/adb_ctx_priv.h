@@ -6,11 +6,11 @@
 #include <mbedtls/ctr_drbg.h>
 
 typedef struct libusb_context libusb_context;
-typedef struct adb_usb_info adb_usb_info_t;
+typedef struct adb_wired_info adb_wired_info_t;
 typedef struct adb_ctx
 {
     libusb_context *usb;
-    adb_usb_info_t **conn_infos;
+    adb_wired_info_t **conn_infos;
     size_t infos_count;
     size_t infos_capacity;
 

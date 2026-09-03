@@ -7,27 +7,24 @@
 
 typedef struct adb_ctx adb_ctx_t;
 typedef struct adb_conn adb_conn_t;
-typedef struct adb_usb_info adb_usb_info_t;
 
-typedef adb_error_t (*adb_read_callback_t)(
+typedef size_t (*adb_read_callback_t)(
         void *userdata,
         void *buf,
         const size_t size);
 
-typedef adb_error_t (*adb_write_callback_t)(
+typedef size_t (*adb_write_callback_t)(
         void *userdata,
         const void *buf,
         const size_t size);
 
-const char *adb_conn_info_get_manufacturer(
-        const adb_usb_info_t *conn_info);
-const char *adb_conn_info_get_product(
-        const adb_usb_info_t *conn_info);
-
-adb_error_t adb_query_usb(
-        adb_ctx_t *ctx,
-        adb_usb_info_t ***usb_infos,
-        size_t *usb_count);
+typedef enum
+{
+    ADB_CONN_TYPE_WIRED,
+    ADB_CONN_TYPE_WIRELESS,
+    ADB_CONN_TYPE_CUSTOM,
+    ADB__CONN_TYPE_COUNT
+} adb_conn_type_t;
 
 adb_error_t adb_conn_create_wired(
         adb_conn_t **conn,

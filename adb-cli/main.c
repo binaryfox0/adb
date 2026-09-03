@@ -61,8 +61,8 @@ static void query_command(
     {
         adb_usb_info_t *conn_info = infos[i];
         info("Device %zu: %s - %s", i,
-                adb_conn_info_get_manufacturer(conn_info),
-                adb_conn_info_get_product(conn_info));
+                adb_wired_info_get_manufacturer(conn_info),
+                adb_wired_info_get_product(conn_info));
     }
 cleanup:
     adb_ctx_destroy(ctx);
