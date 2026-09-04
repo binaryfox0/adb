@@ -7,6 +7,7 @@
 #include "adb_ctx_priv.h"
 #include "adb_alloc_priv.h"
 #include "adb_log_priv.h"
+#include "adb_lookup.h"
 
 #define ADB__INTERFACE_CLASS    0xFF
 #define ADB__INTERFACE_SUBCLASS 0x42
@@ -284,29 +285,20 @@ static adb_error_t adb__append_conn_info(
     return ADB_ERR_OK;
 }
 
-void adb__conn_info_destroy(
-        adb_wired_info_t *conn_info)
-{
-    if(!conn_info)
-        return;
-    libusb_unref_device(conn_info->device);
-    adb__free(conn_info);
-}
-
-adb_error_t adb_query_usb(
+adb_error_t adb_query_wired(
         adb_ctx_t *ctx,
-        adb_wired_info_t ***usb_infos,
-        size_t *conn_count)
+        adb_wired_info_t ***infos,
+        size_t *info_count)
 {
     adb_error_t ret = ADB_ERR_OK;
     int res = 0;
     libusb_device **list = NULL;
     ssize_t usb_count = 0;
 
-    if(!ctx || !usb_infos || !conn_count)
+    if(!ctx || !infos || !info_count)
         return ADB_ERR_PARAM;
 
-    ADB__INFO("starting ADB device query");
+    ADB__INFO("starting ADB wired device query");
 
     ctx->infos_count = 0;
     usb_count = libusb_get_device_list(ctx->usb, &list);
@@ -376,11 +368,36 @@ adb_error_t adb_query_usb(
 
     libusb_free_device_list(list, true);
 
-    *usb_infos = ctx->conn_infos;
-    *conn_count = ctx->infos_count;
+    *infos = ctx->conn_infos;
+    *info_count = ctx->infos_count;
 
     ADB__INFO("ADB device query completed: %zu device(s)",
             ctx->infos_count);
 
     return ret;
+}
+
+void adb__wired_info_destroy(
+        adb_wired_info_t *info)
+{
+    if(!info)
+        return;
+    libusb_unref_device(info->device);
+    adb__free(info);
+}
+
+adb_error_t adb_query_wireless(
+        adb_ctx_t *ctx,
+        adb_wireless_info_t ***infos,
+        size_t *info_count)
+{
+    if(!ctx || !infos || !info_count)
+        return ADB_ERR_PARAM;
+    return ADB_ERR_UNSUPPORTED;
+}
+
+void adb__wireless_info_destroy(
+        adb_wireless_info_t *info)
+{
+    (void)info;
 }

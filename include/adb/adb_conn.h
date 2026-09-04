@@ -7,29 +7,30 @@
 
 typedef struct adb_ctx adb_ctx_t;
 typedef struct adb_conn adb_conn_t;
+typedef struct adb_wired_info adb_wired_info_t;
 
-typedef size_t (*adb_read_callback_t)(
+typedef int (*adb_read_callback_t)(
         void *userdata,
-        void *buf,
-        const size_t size);
+        uint8_t *buf,
+        size_t size);
 
-typedef size_t (*adb_write_callback_t)(
+typedef int (*adb_write_callback_t)(
         void *userdata,
-        const void *buf,
-        const size_t size);
+        const uint8_t *buf,
+        size_t size);
 
 typedef enum
 {
-    ADB_CONN_TYPE_WIRED,
-    ADB_CONN_TYPE_WIRELESS,
-    ADB_CONN_TYPE_CUSTOM,
-    ADB__CONN_TYPE_COUNT
-} adb_conn_type_t;
+    ADB_CONN_PROFILE_WIRED,
+    ADB_CONN_PROFILE_WIRELESS,
+    ADB_CONN_PROFILE_CUSTOM,
+    ADB__CONN_PROFILE_COUNT
+} adb_conn_profile_t;
 
 adb_error_t adb_conn_create_wired(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
-        const adb_usb_info_t *usb_info);
+        const adb_wired_info_t *usb_info);
 
 adb_error_t adb_conn_create_wireless(
         adb_conn_t **conn,
@@ -42,7 +43,8 @@ adb_error_t adb_conn_create_custom(
         adb_ctx_t *ctx,
         const adb_read_callback_t read_cb,
         const adb_write_callback_t write_cb,
-        void *userdata);
+        void *userdata,
+        const adb_conn_profile_t profile);
 
 adb_error_t adb_conn_pair(
         adb_conn_t *conn,

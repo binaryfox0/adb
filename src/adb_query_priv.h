@@ -19,6 +19,12 @@ typedef struct adb_wired_info
     char serial[256];
 } adb_wired_info_t;
 
+typedef struct adb_wireless_info adb_wireless_info_t;
+
 void adb__wired_info_destroy(
+        adb_wired_info_t *info);
+
+void adb__wireless_info_destroy(
+        adb_wireless_info_t *info);
 
 #endif

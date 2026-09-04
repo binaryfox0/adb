@@ -1,6 +1,8 @@
 #ifndef ADB_ERROR_H
 #define ADB_ERROR_H
 
+#define ADB_CALLBACK_ERR(err) (-(err))
+
 typedef enum
 {
     ADB_ERR_OK,
