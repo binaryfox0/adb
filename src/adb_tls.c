@@ -89,10 +89,7 @@ adb_error_t adb__tls_init(
 
     if(err != 0)
     {
-        adb__log_err_mbedtls(
-                "failed to seed TLS RNG",
-                err);
-
+        adb__log_err_mbedtls(err, "failed to seed TLS RNG");
         goto fail;
     }
 
@@ -104,10 +101,7 @@ adb_error_t adb__tls_init(
 
     if(err != 0)
     {
-        adb__log_err_mbedtls(
-                "failed to configure TLS",
-                err);
-
+        adb__log_err_mbedtls(err, "failed to configure TLS");
         goto fail;
     }
 
@@ -126,10 +120,7 @@ adb_error_t adb__tls_init(
 
     if(err != 0)
     {
-        adb__log_err_mbedtls(
-                "failed to setup TLS",
-                err);
-
+        adb__log_err_mbedtls(err, "failed to setup TLS");
         goto fail;
     }
 
@@ -157,27 +148,54 @@ fail:
     return ADB_ERR_CRYPTO;
 }
 
-
 adb_error_t adb__tls_handshake(
         adb__tls_t *tls)
 {
-    int ret = 0;
-
+    int err = 0;
     if(!tls || !tls->initialized)
         return ADB_ERR_PARAM;
+    
+    err = mbedtls_ssl_handshake(&tls->ssl);
+    if(err != 0)
+    {
+        adb__log_err_mbedtls(err, "failed to perform TLS handshake");
+        if(tls->bio_error != ADB_ERR_OK)
+        {
+            ADB__INFO("send/recv reason: %s", 
+                    adb_strerror(tls->bio_error));
+            return tls->bio_error;
+        }
 
-    tls->bio_error = ADB_ERR_OK;
+        return ADB_ERR_NETWORK;
+    }
 
-    ret = mbedtls_ssl_handshake(&tls->ssl);
-    if(ret == 0)
-        return ADB_ERR_OK;
-
-    if(tls->bio_error != ADB_ERR_OK)
-        return tls->bio_error;
-
-    return ADB_ERR_CRYPTO;
+    return ADB_ERR_OK;
 }
 
+adb_error_t adb__tls_export_keying_material(
+        adb__tls_t *tls,
+        uint8_t *out)
+{
+    int err = 0;
+    if(!tls || !tls->initialized || !out)
+        return ADB_ERR_PARAM;
+
+    err = mbedtls_ssl_export_keying_material(
+            &tls->ssl,
+            out,
+            ADB__TLS_EXPORTED_KEY_SIZE,
+            "adb-label",
+            sizeof("adb-label"),
+            0, 0, 0);
+
+    if(err != 0)
+    {
+        adb__log_err_mbedtls(err, "failed to get TLS keying material");
+        return ADB_ERR_CRYPTO;
+    }
+
+    return ADB_ERR_OK;
+}
 
 adb_error_t adb__tls_read(
         adb__tls_t *tls,
@@ -265,7 +283,6 @@ adb_error_t adb__tls_write(
 
     return ADB_ERR_OK;
 }
-
 
 void adb__tls_destroy(
         adb__tls_t *tls)

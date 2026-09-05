@@ -19,17 +19,6 @@ adb_error_t adb_ctx_create(
     if(!tmp)
         return ADB_ERR_NO_MEM;
 
-    err = libusb_init(&tmp->usb);
-    if(err != 0)
-    {
-        ADB__ERROR("failed to create libusb context");
-        ADB__INFO("reason: %s (%s)", 
-                libusb_error_name(err), 
-                libusb_strerror(err));
-        adb_ctx_destroy(tmp);
-        return ADB_ERR_USB;
-    }
-
     mbedtls_entropy_init(&tmp->entropy);
     mbedtls_ctr_drbg_init(&tmp->drbg);
 
@@ -41,11 +30,31 @@ adb_error_t adb_ctx_create(
             0);
     if(err != 0)
     {
-        adb__log_err_mbedtls("failed to create random generator", err);
+        adb__log_err_mbedtls(err, "failed to create random generator");
         adb_ctx_destroy(tmp);
         return ADB_ERR_CRYPTO;
     }
 
+    err = libusb_init(&tmp->usb);
+    if(err != 0)
+    {
+        ADB__ERROR("failed to create libusb context");
+        ADB__INFO("reason: %s (%s)", 
+                libusb_error_name(err), 
+                libusb_strerror(err));
+        ADB__WARN("wired-related features will be unavailable");
+    } else
+        tmp->features |= ADB__FEATURE_WIRED;
+
+    tmp->features |= ADB__FEATURE_WIRELESS;
+
+    if(tmp->features == 0)
+    {
+        ADB__ERROR("failed to create at least one feature");
+        adb_ctx_destroy(tmp);
+        return ADB_ERR_UNSUPPORTED; // should be GENERIC?
+    }
+    
     *ctx = tmp;
     return ADB_ERR_OK;
 }
@@ -61,7 +70,8 @@ void adb_ctx_destroy(
 
     for(size_t i = 0; i < ctx->infos_capacity; i++)
         adb__wired_info_destroy(ctx->wired_infos[i]);
-    adb__free(ctx->wired_infos);
-    libusb_exit(ctx->usb);
-    adb__free(ctx);
+    adb_free(ctx->wired_infos);
+    if((ctx->features & ADB__FEATURE_WIRED) != 0)
+        libusb_exit(ctx->usb);
+    adb_free(ctx);
 }

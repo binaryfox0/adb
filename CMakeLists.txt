@@ -86,6 +86,7 @@ add_library(adb
     src/adb_transport_custom.c
     src/adb_transport.c
     src/adb_tls.c
+    src/adb_key.c
     src/adb_conn.c)
 target_include_directories(adb PUBLIC include/)
 target_link_libraries(adb PRIVATE 

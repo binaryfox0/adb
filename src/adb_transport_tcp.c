@@ -1,6 +1,8 @@
 #include "adb_transport_tcp.h"
 #include "adb_transport.h"
 
+#include <string.h>
+
 #include <errno.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -8,6 +10,7 @@
 
 #include "adb_alloc_priv.h"
 #include "adb_error_priv.h"
+#include "adb_log_priv.h"
 
 static adb_error_t adb__tcp_read(
         void *userdata,
@@ -95,8 +98,12 @@ adb_error_t adb__tcp_transport_create(
     int sock = 0;
     struct sockaddr_in addr = {0};
     int err = 0;
+
     if(!transport || !host || port == 0)
         return ADB_ERR_PARAM;
+
+    ADB__INFO("creating connection for wireless device %s:%d",
+            host, port);
 
     sock = socket(
             AF_INET,
@@ -105,6 +112,8 @@ adb_error_t adb__tcp_transport_create(
 
     if(sock < 0)
     {
+        ADB__ERROR("failed to create socket for %s:%u", host, port);
+        ADB__INFO("reason: %s", strerror(errno));
         ret = adb__error_from_errno(errno);
         goto fail;
     }
@@ -119,6 +128,7 @@ adb_error_t adb__tcp_transport_create(
 
     if(err != 1)
     {
+        ADB__ERROR("failed to parse device host %s", host);
         err = ADB_ERR_NETWORK;
         goto fail;
     }
@@ -130,6 +140,8 @@ adb_error_t adb__tcp_transport_create(
 
     if(err < 0)
     {
+        ADB__ERROR("failed to connect to %s:%u", host, port);
+        ADB__INFO("reason: %s", strerror(errno));
         ret = adb__error_from_errno(errno);
         goto fail;
     }
@@ -138,6 +150,9 @@ adb_error_t adb__tcp_transport_create(
     transport->read = adb__tcp_read;
     transport->write = adb__tcp_write;
     transport->destroy = adb__tcp_destroy;
+
+    ADB__INFO("created connection successfully for wireless device %s:%d",
+            host, port);
 
     return ADB_ERR_OK;
 

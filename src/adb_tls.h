@@ -10,6 +10,8 @@
 
 #include <adb/adb_error.h>
 
+#define ADB__TLS_EXPORTED_KEY_SIZE 64
+
 typedef struct adb__transport adb__transport_t;
 typedef struct
 {
@@ -31,6 +33,10 @@ adb_error_t adb__tls_init(
 
 adb_error_t adb__tls_handshake(
         adb__tls_t *tls);
+
+adb_error_t adb__tls_export_keying_material(
+        adb__tls_t *tls,
+        uint8_t *out);
 
 adb_error_t adb__tls_read(
         adb__tls_t *tls,

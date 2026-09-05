@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdarg.h>
+#include <errno.h>
 
 #include <mbedtls/error.h>
 
@@ -32,34 +33,57 @@ adb_error_t adb_set_log_callback(
     return ADB_ERR_OK;
 }
 
-void adb__log(
+static void adb__vlog(
         const adb_log_level_t level,
         const char *fmt,
-        ...)
+        va_list va)
 {
     char buffer[4096] = {0};
-    va_list va;
-
     if(!adb__log_callback)
         return;
     if(level < adb__log_level)
         return;
 
-    va_start(va, fmt);
     vsnprintf(buffer, sizeof(buffer), fmt, va);
-    va_end(va);
-
     adb__log_callback(
             adb__log_userdata, level, 
             buffer);
 }
 
-void adb__log_err_mbedtls(
-        const char *label,
-        const int err)
+void adb__log(
+        const adb_log_level_t level,
+        const char *fmt,
+        ...)
 {
+    va_list va;
+    va_start(va, fmt);
+    adb__vlog(level, fmt, va);
+    va_end(va);
+}
+
+void adb__log_err_mbedtls(
+        const int err,
+        const char *fmt,
+        ...)
+{
+    va_list va;
     char buf[256] = {0};
+
+    va_start(va, fmt);
+    adb__vlog(ADB_LOG_ERROR, fmt, va);
+    va_end(va);
     mbedtls_strerror(err, buf, sizeof(buf));
-    ADB__ERROR("%s", label);
     ADB__INFO("reason: %s", buf);
+}
+
+void adb__log_err_errno(
+        const char *fmt,
+        ...)
+{
+    va_list va;
+
+    va_start(va, fmt);
+    adb__vlog(ADB_LOG_ERROR, fmt, va);
+    va_end(va);
+    ADB__INFO("reason: %s", strerror(errno));
 }

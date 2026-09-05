@@ -4,6 +4,7 @@
 #include <libusb.h>
 
 #include "adb_alloc_priv.h"
+#include "adb_log_priv.h"
 #include "adb_error_priv.h"
 #include "adb_query_priv.h"
 
@@ -103,7 +104,7 @@ static void adb__usb_destroy(
         libusb_close(usb->handle);
     }
 
-    adb__free(usb);
+    adb_free(usb);
 }
 
 
@@ -112,12 +113,15 @@ adb_error_t adb__usb_transport_create(
         const adb_wired_info_t *info)
 {
     adb__usb_transport_t *usb = NULL;
-
     libusb_device_handle *handle = NULL;
     int ret = 0;
 
     if(!transport || !info)
         return ADB_ERR_PARAM;
+
+    ADB__INFO("creating connection for wired device %04X:%04X %s %s",
+            info->vendor_id, info->product_id,
+            info->manufacturer, info->product);
 
     usb = adb__calloc(1, sizeof(*usb));
     if(!usb)
@@ -126,7 +130,7 @@ adb_error_t adb__usb_transport_create(
     ret = libusb_open(info->device, &handle);
     if(ret != LIBUSB_SUCCESS)
     {
-        adb__free(usb);
+        adb_free(usb);
         return adb__error_from_libusb(ret);
     }
 
@@ -137,7 +141,7 @@ adb_error_t adb__usb_transport_create(
     if(ret != LIBUSB_SUCCESS)
     {
         libusb_close(handle);
-        adb__free(usb);
+        adb_free(usb);
         return adb__error_from_libusb(ret);
     }
 
@@ -150,6 +154,12 @@ adb_error_t adb__usb_transport_create(
     transport->read = adb__usb_read;
     transport->write = adb__usb_write;
     transport->destroy = adb__usb_destroy;
+
+    ADB__INFO("created connection successfully for wired device "
+             "%04X:%04X %s %s (interface %u)",
+             info->vendor_id, info->product_id,
+             info->manufacturer, info->product,
+             info->itf_idx);
 
     return ADB_ERR_OK;
 }

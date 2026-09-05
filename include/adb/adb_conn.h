@@ -48,7 +48,8 @@ adb_error_t adb_conn_create_custom(
 
 adb_error_t adb_conn_pair(
         adb_conn_t *conn,
-        const char code[7]);
+        const char *code,
+        const size_t code_len);
 
 adb_error_t adb_conn_handshake(
         adb_conn_t *conn);

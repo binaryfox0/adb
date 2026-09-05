@@ -393,7 +393,7 @@ void adb__wired_info_destroy(
     if(!info)
         return;
     libusb_unref_device(info->device);
-    adb__free(info);
+    adb_free(info);
 }
 
 adb_error_t adb_query_wireless(

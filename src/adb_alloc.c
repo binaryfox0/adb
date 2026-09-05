@@ -83,7 +83,7 @@ void *adb__realloc(
     return adb__alloc.realloc(adb__alloc.userdata, p, size);
 }
 
-void adb__free(
+void adb_free(
         void *p) {
     adb__alloc.free(adb__alloc.userdata, p);
 }

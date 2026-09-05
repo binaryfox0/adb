@@ -4,8 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
-#include <errno.h>
-
+#include <ctype.h>
 
 #include <libusb.h>
 #include <mbedtls/error.h>
@@ -60,7 +59,7 @@ adb_error_t adb_conn_create_wired(
 
     if(err != ADB_ERR_OK)
     {
-        adb__free(tmp);
+        adb_free(tmp);
         return err;
     }
 
@@ -108,7 +107,7 @@ fail:
 
     adb__tls_destroy(&tmp->tls);
     adb__transport_destroy(&tmp->transport);
-    adb__free(tmp);
+    adb_free(tmp);
 
     return err;
 }
@@ -147,7 +146,7 @@ adb_error_t adb_conn_create_custom(
 
     if(err != ADB_ERR_OK)
     {
-        adb__free(tmp);
+        adb_free(tmp);
         return err;
     }
 
@@ -162,7 +161,7 @@ adb_error_t adb_conn_create_custom(
             adb__transport_destroy(
                     &tmp->transport);
 
-            adb__free(tmp);
+            adb_free(tmp);
             return err;
         }
     }
@@ -171,24 +170,64 @@ adb_error_t adb_conn_create_custom(
     return ADB_ERR_OK;
 }
 
+static inline bool adb__verify_pairing_code(
+        const char *code,
+        const size_t code_len)
+{
+    if(!code && code_len != 6)
+        return false;
+    for(size_t i = 0; i < code_len; i++)
+    {
+        if(!isdigit(code[i]))
+            return false;
+    }
+    return true;
+}
+
+static void adb__print_keying_material(
+        const uint8_t *keying_material)
+{
+    char buffer[ADB__TLS_EXPORTED_KEY_SIZE * 2 + 1] = {0};
+    if(!keying_material)
+        return;
+
+    for(int i = 0; i < ADB__TLS_EXPORTED_KEY_SIZE; i++)
+    {
+        snprintf(buffer + i * 2, sizeof(buffer) - (size_t)i * 2, 
+                "%02x", keying_material[i]);
+    }
+    ADB__DEBUG("keying material: \"%s\"", buffer);
+}
+
 adb_error_t adb_conn_pair(
         adb_conn_t *conn,
-        const char code[7])
+        const char *code,
+        const size_t code_len)
 {
-    int err = 0;
-    if(!conn || !code || strlen(code) != 6)
+    adb_error_t res = ADB_ERR_OK;
+    uint8_t keying_material[ADB__TLS_EXPORTED_KEY_SIZE] = {0};
+    if(!conn || !adb__verify_pairing_code(code, code_len))
         return ADB_ERR_PARAM;
-    if(conn->profile != ADB_CONN_PROFILE_WIRELESS)
+    if(!conn->tls.initialized)
         return ADB_ERR_UNSUPPORTED;
 
-    err = mbedtls_ssl_handshake(&conn->tls.ssl);
-    if(err != 0)
-    {
-        adb__log_err_mbedtls("failed to perform TLS handshake", err);
-        return ADB_ERR_NETWORK;
-    }
+    ADB__INFO("pairing wireless device with code \"%6s\"", code);
 
+    
+    res = adb__tls_handshake(&conn->tls);
+    if(res != ADB_ERR_OK)
+        return res;
 
+    res = adb__tls_export_keying_material(
+            &conn->tls,
+            keying_material);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    adb__tls_export_keying_material(&conn->tls, keying_material);
+    adb__print_keying_material(keying_material);
+
+    ADB__INFO("pairing wireless device successfully");
     return ADB_ERR_OK;
 }
 
@@ -251,7 +290,7 @@ void adb_conn_destroy(
 
     adb__tls_destroy(&conn->tls);
     adb__transport_destroy(&conn->transport);
-    adb__free(conn);
+    adb_free(conn);
 }
 
 adb_error_t adb__conn_read(
