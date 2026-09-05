@@ -79,7 +79,7 @@ static void adb__custom_destroy(
     if(!custom)
         return;
 
-    adb_free(custom);
+    adb__free(custom);
 }
 
 

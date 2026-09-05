@@ -14,7 +14,4 @@ typedef struct
 void adb_set_alloc(
         const adb_alloc_t *alloc);
 
-void adb_free(
-        void *p);
-
 #endif

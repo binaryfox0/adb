@@ -14,7 +14,7 @@ void *adb__realloc(
         void *p, 
         size_t size);
 
-void adb_free(
+void adb__free(
         void *p);
 
 #endif

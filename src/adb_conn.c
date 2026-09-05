@@ -59,7 +59,7 @@ adb_error_t adb_conn_create_wired(
 
     if(err != ADB_ERR_OK)
     {
-        adb_free(tmp);
+        adb__free(tmp);
         return err;
     }
 
@@ -107,7 +107,7 @@ fail:
 
     adb__tls_destroy(&tmp->tls);
     adb__transport_destroy(&tmp->transport);
-    adb_free(tmp);
+    adb__free(tmp);
 
     return err;
 }
@@ -146,7 +146,7 @@ adb_error_t adb_conn_create_custom(
 
     if(err != ADB_ERR_OK)
     {
-        adb_free(tmp);
+        adb__free(tmp);
         return err;
     }
 
@@ -161,7 +161,7 @@ adb_error_t adb_conn_create_custom(
             adb__transport_destroy(
                     &tmp->transport);
 
-            adb_free(tmp);
+            adb__free(tmp);
             return err;
         }
     }
@@ -290,7 +290,7 @@ void adb_conn_destroy(
 
     adb__tls_destroy(&conn->tls);
     adb__transport_destroy(&conn->transport);
-    adb_free(conn);
+    adb__free(conn);
 }
 
 adb_error_t adb__conn_read(

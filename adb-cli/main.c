@@ -158,7 +158,6 @@ static void pubkey_command(
     CHECK(adb_key_generate_pubkey(key, &pubkey),
             "failed to generate public key from private key", err, cleanup);
 
-
     if(output)
     {
         FILE *file = NULL;
@@ -185,7 +184,7 @@ static void pubkey_command(
         printf("%s\n", pubkey);
 
 cleanup:
-    adb_free(pubkey);  
+    adb__free(pubkey);  
     adb_key_destroy(key);
     adb_ctx_destroy(ctx);
 }

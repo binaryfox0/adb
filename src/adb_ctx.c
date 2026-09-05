@@ -70,8 +70,8 @@ void adb_ctx_destroy(
 
     for(size_t i = 0; i < ctx->infos_capacity; i++)
         adb__wired_info_destroy(ctx->wired_infos[i]);
-    adb_free(ctx->wired_infos);
+    adb__free(ctx->wired_infos);
     if((ctx->features & ADB__FEATURE_WIRED) != 0)
         libusb_exit(ctx->usb);
-    adb_free(ctx);
+    adb__free(ctx);
 }

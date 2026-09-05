@@ -104,7 +104,7 @@ static void adb__usb_destroy(
         libusb_close(usb->handle);
     }
 
-    adb_free(usb);
+    adb__free(usb);
 }
 
 
@@ -130,7 +130,7 @@ adb_error_t adb__usb_transport_create(
     ret = libusb_open(info->device, &handle);
     if(ret != LIBUSB_SUCCESS)
     {
-        adb_free(usb);
+        adb__free(usb);
         return adb__error_from_libusb(ret);
     }
 
@@ -141,7 +141,7 @@ adb_error_t adb__usb_transport_create(
     if(ret != LIBUSB_SUCCESS)
     {
         libusb_close(handle);
-        adb_free(usb);
+        adb__free(usb);
         return adb__error_from_libusb(ret);
     }
 

@@ -20,9 +20,9 @@
 #define ADB__RSA_EXPONENT       65537
 #define ADB__RSA_MODULUS_SIZE   (ADB__RSA_MODULUS_BITS / 8)
 #define ADB__RSA_MODULUS_WORDS  (ADB__RSA_MODULUS_SIZE / 4)
-#define ADB__PUBKEY_ENCODED_SIZE    \
+#define ADB__ANDROID_PUBKEY_SIZE    \
     (3 * sizeof(uint32_t) + 2 * ADB__RSA_MODULUS_SIZE)  
-  
+#define ADB__BASE64_SIZE(n) (4 * (((n) + 2) / 3))
   
 typedef struct {  
     uint32_t modulus_size_words;  
@@ -38,7 +38,7 @@ typedef struct adb_key
     char *pubkey;
 } adb_key_t;
  
-_Static_assert(sizeof(adb__android_pubkey_t) == ADB__PUBKEY_ENCODED_SIZE,
+_Static_assert(sizeof(adb__android_pubkey_t) == ADB__ANDROID_PUBKEY_SIZE,
         "adb__android_pubkey must be exactly 524 bytes");
 
 adb_error_t adb_key_generate(
@@ -157,7 +157,7 @@ adb_error_t adb_key_load(
 cleanup:
     if(ret != ADB_ERR_OK)
         adb_key_destroy(tmp);
-    adb_free(buffer);
+    adb__free(buffer);
     fclose(file);
 
     return ret;
@@ -179,9 +179,6 @@ static bool adb__encode_android_pubkey(
     mbedtls_mpi_init(&n0);  
     mbedtls_mpi_init(&rr);  
   
-    /*  
-     * modulus_size_words = 2048 / 32 = 64  
-     */  
     out->modulus_size_words = ADB__RSA_MODULUS_WORDS;  
   
     /*  
@@ -194,25 +191,13 @@ static bool adb__encode_android_pubkey(
      *   n0inv = inverse(n0inv) mod r32  
      *   n0inv = r32 - n0inv  
      */  
-  
-    ret = mbedtls_mpi_lset(&r, 0);  
-    if (ret != 0) 
-        goto fail;    
-  
-    ret = mbedtls_mpi_set_bit(&r, 32, 1);  
-    if (ret != 0) 
-        goto fail;    
-  
-    ret = mbedtls_mpi_mod_mpi(&n0, &rsa->private_N, &r);  
-    if (ret != 0) 
-        goto fail;    
-  
-    ret = mbedtls_mpi_inv_mod(&n0, &n0, &r);  
-    if (ret != 0) 
-        goto fail;    
-  
-    ret = mbedtls_mpi_sub_mpi(&n0, &r, &n0);  
-    if (ret != 0) 
+ 
+    if(
+            (ret = mbedtls_mpi_lset(&r, 0)) != 0 ||  
+            (ret = mbedtls_mpi_set_bit(&r, 32, 1)) != 0 ||  
+            (ret = mbedtls_mpi_mod_mpi(&n0, &rsa->private_N, &r)) != 0 ||  
+            (ret = mbedtls_mpi_inv_mod(&n0, &n0, &r)) != 0 ||  
+            (ret = mbedtls_mpi_sub_mpi(&n0, &r, &n0)) != 0)
         goto fail;    
   
     mbedtls_mpi_write_binary_le(
@@ -252,9 +237,7 @@ static bool adb__encode_android_pubkey(
     if (ret != 0) 
         goto fail;    
   
-    /*  
-     * rr = rr^2 mod N  
-     */  
+    /* rr = rr^2 mod N */  
     ret = mbedtls_mpi_mul_mpi(&rr, &rr, &rr);  
     if (ret != 0) 
         goto fail;    
@@ -288,27 +271,23 @@ fail:
 
 adb_error_t adb_key_generate_pubkey(
         adb_key_t *key,
-        char **out)
+        char *buffer,
+        const size_t size,
+        size_t *out_size)
 {
     adb__android_pubkey_t pubkey = {0};
-    size_t encoded_size = 0;
+    size_t encoded_size = ADB__BASE64_SIZE(ADB__ANDROID_PUBKEY_SIZE);
     char *tmp = NULL;
     struct passwd *pw = NULL;
     char hostname[HOST_NAME_MAX + 1] = {0};
-    size_t size = 0;
+    size_t min_size = 0;
     
-    if(!key || !out)
+    if(!key || (!buffer ^ (size == 0)) || !out_size)
         return ADB_ERR_PARAM;
 
     if(!adb__encode_android_pubkey(mbedtls_pk_rsa(key->pk), &pubkey))
         return ADB_ERR_CRYPTO;
 
-    mbedtls_base64_encode(
-            NULL, 
-            0, 
-            &encoded_size, 
-            (uint8_t*)&pubkey, 
-            ADB__PUBKEY_ENCODED_SIZE);
     pw = getpwuid(getuid());
     if(!pw)
     {
@@ -317,28 +296,29 @@ adb_error_t adb_key_generate_pubkey(
     }
     gethostname(hostname, sizeof(hostname));
 
-    size =
+    min_size =
         encoded_size + 1 + /* ' ' */
         strlen(pw->pw_name) + 1 + /* '@' */
-        strlen(hostname) + 1, /* '\0' */
+        strlen(hostname) + 1; /* '\0' */
+    if(min_size > size)
+        return ADB_ERR_TOO_SMALL;
 
-    tmp = adb__malloc(size);
-    if(!tmp)
-        return ADB_ERR_NO_MEM;
+    *out_size = min_size;
+    if(!buffer)
+        return ADB_ERR_OK;
 
     mbedtls_base64_encode(
-            (uint8_t*)tmp, 
+            (uint8_t*)buffer, 
             encoded_size, 
             &encoded_size, /* must not be NULL */ 
             (uint8_t*)&pubkey, 
-            ADB__PUBKEY_ENCODED_SIZE);
+            ADB__ANDROID_PUBKEY_SIZE);
     snprintf(
             tmp + encoded_size, 
             size - encoded_size, 
             " %s@%s", 
             pw->pw_name, hostname);
     
-    *out = tmp; 
     return ADB_ERR_OK;
 }
 
@@ -349,7 +329,182 @@ void adb_key_destroy(
         return;
 
     mbedtls_pk_free(&key->pk);
-    adb_free(key->pubkey);
-    adb_free(key);
+    adb__free(key->pubkey);
+    adb__free(key);
 }
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "mbedtls/asn1write.h"
+#include "mbedtls/error.h"
+#include "mbedtls/pk.h"
+
+/*
+ * Write an RSA-2048 private key as unencrypted PKCS#8 PrivateKeyInfo DER.
+ *
+ * The supplied buffer is used as scratch/output storage.
+ * The DER is written at the END of the buffer, following the same
+ * convention as mbedtls_pk_write_key_der().
+ *
+ * On success:
+ *   - *out points to the beginning of the PKCS#8 DER
+ *   - *out_len is its length
+ *
+ * Expected output:
+ *
+ *   PrivateKeyInfo ::= SEQUENCE {
+ *       version                   INTEGER 0,
+ *       privateKeyAlgorithm      AlgorithmIdentifier {
+ *           rsaEncryption,
+ *           NULL
+ *       },
+ *       privateKey                OCTET STRING { RSAPrivateKey DER }
+ *   }
+ *
+ * Returns 0 on success, otherwise a negative Mbed TLS error code.
+ */
+int write_rsa2048_pkcs8_der( adb_key_t *key,
+                             unsigned char *buf,
+                             size_t buf_size,
+                             unsigned char **out,
+                             size_t *out_len )
+{
+    unsigned char *p;
+    unsigned char *start = buf;
+    int ret;
+    int len;
+
+    /*
+     * rsaEncryption OID:
+     *
+     * 1.2.840.113549.1.1.1
+     *
+     * DER value:
+     *   06 09 2A 86 48 86 F7 0D 01 01 01
+     *
+     * mbedtls_asn1_write_algorithm_identifier() expects the
+     * raw OID contents, not the DER 06 09 prefix.
+     */
+    static const unsigned char rsa_encryption_oid[] = {
+        0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01
+    };
+
+    if (!key || buf == NULL || out == NULL || out_len == NULL) {
+        return MBEDTLS_ERR_PK_BAD_INPUT_DATA;
+    }
+
+    *out = NULL;
+    *out_len = 0;
+
+    p = buf + buf_size;
+
+    /*
+     * Step 1:
+     *
+     * Write the existing RSA private-key DER.
+     *
+     * This gives us:
+     *
+     *   RSAPrivateKey ::= SEQUENCE {
+     *       version           INTEGER,
+     *       modulus           INTEGER,
+     *       publicExponent    INTEGER,
+     *       privateExponent   INTEGER,
+     *       prime1            INTEGER,
+     *       prime2            INTEGER,
+     *       exponent1         INTEGER,
+     *       exponent2         INTEGER,
+     *       coefficient       INTEGER
+     *   }
+     *
+     * and p points to its beginning.
+     */
+    ret = mbedtls_pk_write_key_der(&key->pk, buf, buf_size);
+    if (ret < 0) {
+        return ret;
+    }
+
+    len = ret;
+    p = buf + buf_size - len;
+
+    /*
+     * Step 2:
+     *
+     * Wrap the PKCS#1 DER in:
+     *
+     *   OCTET STRING
+     *
+     * We do this manually rather than copying the existing DER,
+     * because the ASN.1 writer works backwards and the PKCS#1
+     * bytes are already exactly where we want them.
+     */
+    ret = mbedtls_asn1_write_len(&p, start, (size_t) len);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = mbedtls_asn1_write_tag(&p, start, MBEDTLS_ASN1_OCTET_STRING);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /*
+     * Step 3:
+     *
+     * AlgorithmIdentifier:
+     *
+     *   SEQUENCE {
+     *       algorithm  OBJECT IDENTIFIER rsaEncryption
+     *       parameters NULL
+     *   }
+     *
+     * par_len = 0 means "write a NULL parameter".
+     */
+    ret = mbedtls_asn1_write_algorithm_identifier(
+        &p,
+        start,
+        (const char *) rsa_encryption_oid,
+        sizeof(rsa_encryption_oid),
+        0
+    );
+    if (ret < 0) {
+        return ret;
+    }
+
+    /*
+     * Step 4:
+     *
+     * PKCS#8 version = 0.
+     */
+    ret = mbedtls_asn1_write_int(&p, start, 0);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /*
+     * Step 5:
+     *
+     * Wrap everything in the outer PrivateKeyInfo SEQUENCE.
+     */
+    len = (int) (buf + buf_size - p);
+
+    ret = mbedtls_asn1_write_len(&p, start, (size_t) len);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = mbedtls_asn1_write_tag(
+        &p,
+        start,
+        MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE
+    );
+    if (ret < 0) {
+        return ret;
+    }
+
+    *out = p;
+    *out_len = (size_t) (buf + buf_size - p);
+
+    return 0;
+}

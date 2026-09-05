@@ -9,12 +9,19 @@ const char *adb_strerror(
 {
     static const char *error_msgs[ADB__ERR_COUNT] =
     {
-        [ADB_ERR_OK]        = "no error",
-        [ADB_ERR_GENERIC]   = "generic error",
-        [ADB_ERR_PARAM]     = "paramaters error",
-        [ADB_ERR_NO_MEM]    = "out of memory",
-        [ADB_ERR_USB]       = "usb error",
-        [ADB_ERR_NETWORK]   = "network error"
+        [ADB_ERR_OK]           = "no error",
+        [ADB_ERR_GENERIC]      = "unspecified error",
+        [ADB_ERR_UNSUPPORTED]  = "operation not supported",
+        [ADB_ERR_PARAM]        = "invalid parameter",
+        [ADB_ERR_NO_MEM]       = "memory allocation failed",
+        [ADB_ERR_IO]           = "I/O operation failed",
+        [ADB_ERR_USB]          = "USB operation failed",
+        [ADB_ERR_NETWORK]      = "network operation failed",
+        [ADB_ERR_TIMEOUT]      = "operation timed out",
+        [ADB_ERR_DISCONNECTED] = "device disconnected",
+        [ADB_ERR_PROTOCOL]     = "protocol error",
+        [ADB_ERR_CRYPTO]       = "cryptographic operation failed",
+        [ADB_ERR_TOO_SMALL]        = "buffer too small",
     };
     if(err < 0 || err >= ADB__ERR_COUNT)
         return "unknown error";

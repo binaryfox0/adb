@@ -17,6 +17,7 @@ typedef enum
     ADB_ERR_DISCONNECTED,
     ADB_ERR_PROTOCOL,
     ADB_ERR_CRYPTO,
+    ADB_ERR_TOO_SMALL,
     ADB__ERR_COUNT
 } adb_error_t;
 
