@@ -5,6 +5,7 @@
 #include "adb_alloc_priv.h"
 #include "adb_log_priv.h"
 #include "adb_conn_priv.h"
+#include "adb_query_priv.h"
 
 adb_error_t adb_ctx_create(
         adb_ctx_t **ctx)
@@ -59,8 +60,8 @@ void adb_ctx_destroy(
     mbedtls_ctr_drbg_free(&ctx->drbg);
 
     for(size_t i = 0; i < ctx->infos_capacity; i++)
-        adb__conn_info_destroy(ctx->conn_infos[i]);
-    adb__free(ctx->conn_infos);
+        adb__wired_info_destroy(ctx->wired_infos[i]);
+    adb__free(ctx->wired_infos);
     libusb_exit(ctx->usb);
     adb__free(ctx);
 }

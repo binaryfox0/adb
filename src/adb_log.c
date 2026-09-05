@@ -6,12 +6,12 @@
 
 #include <mbedtls/error.h>
 
-static adb_log_callback_t adb__log_callback = NULL;
+static adb_log_fn adb__log_callback = NULL;
 static void *adb__log_userdata = NULL;
 static adb_log_level_t adb__log_level = ADB_LOG_ERROR;
 
 adb_error_t adb_set_log_callback(
-        const adb_log_callback_t callback,
+        const adb_log_fn callback,
         void *userdata,
         const adb_log_level_t level)
 {

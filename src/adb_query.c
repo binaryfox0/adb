@@ -120,13 +120,13 @@ static adb_error_t adb__append_conn_info(
     if(!ctx || !device || !desc)
         return ADB_ERR_PARAM;
 
-    if(ctx->infos_count < ctx->infos_capacity)
+    if(ctx->wired_info_count < ctx->infos_capacity)
     {
-        conn_info = ctx->conn_infos[ctx->infos_count];
+        conn_info = ctx->wired_infos[ctx->wired_info_count];
         if(conn_info)
         {
             ADB__DEBUG("reusing connection info slot %zu",
-                    ctx->infos_count);
+                    ctx->wired_info_count);
             memset(conn_info, 0, sizeof(*conn_info));
         }
         else
@@ -134,7 +134,7 @@ static adb_error_t adb__append_conn_info(
             conn_info = adb__calloc(1, sizeof(*conn_info));
             if(!conn_info)
                 return ADB_ERR_NO_MEM;
-            ctx->conn_infos[ctx->infos_count] = conn_info;
+            ctx->wired_infos[ctx->wired_info_count] = conn_info;
         }
     }
     else
@@ -148,7 +148,7 @@ static adb_error_t adb__append_conn_info(
                 ? 8 : ctx->infos_capacity * 2;
 
         new_infos = adb__realloc(
-                ctx->conn_infos, new_capacity * sizeof(*new_infos));
+                ctx->wired_infos, new_capacity * sizeof(*new_infos));
 
         if(!new_infos)
             return ADB_ERR_NO_MEM;
@@ -156,15 +156,15 @@ static adb_error_t adb__append_conn_info(
         memset(new_infos + old_capacity, 0,
                 (new_capacity - old_capacity) * sizeof(*new_infos));
 
-        ctx->conn_infos = new_infos;
+        ctx->wired_infos = new_infos;
         ctx->infos_capacity = new_capacity;
         conn_info = adb__calloc(1, sizeof(*conn_info));
         if(!conn_info)
             return ADB_ERR_NO_MEM;
 
-        ctx->conn_infos[ctx->infos_count] = conn_info;
+        ctx->wired_infos[ctx->wired_info_count] = conn_info;
         ADB__DEBUG("allocated connection info slot %zu",
-                ctx->infos_count);
+                ctx->wired_info_count);
     }
 
     res = libusb_open(device, &handle);
@@ -274,7 +274,7 @@ static adb_error_t adb__append_conn_info(
     snprintf((char *)conn_info->serial, sizeof(conn_info->serial),
             "%s", serial[0] ? (char *)serial : "unknown");
 
-    ctx->infos_count++;
+    ctx->wired_info_count++;
     ADB__INFO("found ADB device %04X:%04X %s %s (%s)",
             conn_info->vendor_id,
             conn_info->product_id,
@@ -300,7 +300,7 @@ adb_error_t adb_query_wired(
 
     ADB__INFO("starting ADB wired device query");
 
-    ctx->infos_count = 0;
+    ctx->wired_info_count = 0;
     usb_count = libusb_get_device_list(ctx->usb, &list);
     if(usb_count < 0)
     {
@@ -368,13 +368,23 @@ adb_error_t adb_query_wired(
 
     libusb_free_device_list(list, true);
 
-    *infos = ctx->conn_infos;
-    *info_count = ctx->infos_count;
+    *infos = ctx->wired_infos;
+    *info_count = ctx->wired_info_count;
 
     ADB__INFO("ADB device query completed: %zu device(s)",
-            ctx->infos_count);
+            ctx->wired_info_count);
 
     return ret;
+}
+
+const char *adb_wired_info_manufacturer(
+        const adb_wired_info_t *info) {
+    return info ? info->manufacturer : NULL;
+}
+
+const char *adb_wired_info_product(
+        const adb_wired_info_t *info) {
+    return info ? info->product : NULL;
 }
 
 void adb__wired_info_destroy(

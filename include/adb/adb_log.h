@@ -12,13 +12,13 @@ typedef enum
     ADB__LOG_COUNT
 } adb_log_level_t;
 
-typedef void (*adb_log_callback_t)(
+typedef void (*adb_log_fn)(
         void *userdata,
         adb_log_level_t level,
         const char *msg);
 
 adb_error_t adb_set_log_callback(
-        const adb_log_callback_t callback,
+        const adb_log_fn callback,
         void *userdata,
         const adb_log_level_t level);
 

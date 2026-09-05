@@ -80,6 +80,12 @@ add_library(adb
     src/adb_log.c
     src/adb_ctx.c
     src/adb_lookup.c
+    src/adb_query.c
+    src/adb_transport_usb.c
+    src/adb_transport_tcp.c
+    src/adb_transport_custom.c
+    src/adb_transport.c
+    src/adb_tls.c
     src/adb_conn.c)
 target_include_directories(adb PUBLIC include/)
 target_link_libraries(adb PRIVATE 

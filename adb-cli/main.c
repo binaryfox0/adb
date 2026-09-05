@@ -48,21 +48,21 @@ static void query_command(
 {
     adb_error_t err = ADB_ERR_OK;
     adb_ctx_t *ctx = NULL;
-    adb_usb_info_t **infos = NULL;
+    adb_wired_info_t **infos = NULL;
     size_t count = 0;
 
     (void)args;
     (void)param;
     
     CHECK(adb_ctx_create(&ctx), err, cleanup);
-    CHECK(adb_query_usb(ctx, &infos, &count), 
+    CHECK(adb_query_wired(ctx, &infos, &count), 
             err, cleanup);
     for(size_t i = 0; i < count; i++)
     {
-        adb_usb_info_t *conn_info = infos[i];
+        adb_wired_info_t *conn_info = infos[i];
         info("Device %zu: %s - %s", i,
-                adb_wired_info_get_manufacturer(conn_info),
-                adb_wired_info_get_product(conn_info));
+                adb_wired_info_manufacturer(conn_info),
+                adb_wired_info_product(conn_info));
     }
 cleanup:
     adb_ctx_destroy(ctx);
@@ -81,6 +81,7 @@ static void pair_command(
     char *end = NULL;
 
     adb_error_t err = ADB_ERR_OK;
+    adb_ctx_t *ctx = NULL;
     adb_conn_t *conn = NULL;
 
     (void)args;
@@ -118,12 +119,14 @@ static void pair_command(
         return;
     }
 
-    CHECK(adb_conn_create_wireless(&conn, 
+    CHECK(adb_ctx_create(&ctx), err, cleanup);
+    CHECK(adb_conn_create_wireless(&conn, ctx,
                 host, (uint16_t)port), err, cleanup);
     (void)code;
 
 cleanup:
     adb_conn_destroy(conn);
+    adb_ctx_destroy(ctx);
 }
 
 int main(int argc, char **argv)
