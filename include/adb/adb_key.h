@@ -1,6 +1,7 @@
 #ifndef ADB_KEY_H
 #define ADB_KEY_H
 
+#include <stdint.h>
 #include <stddef.h>
 #include <adb/adb_error.h>
 
@@ -22,7 +23,7 @@ adb_error_t adb_key_save(
 
 adb_error_t adb_key_generate_pubkey(
         adb_key_t *key,
-        char *buffer,
+        uint8_t *buffer,
         const size_t size,
         size_t *out_size);
 

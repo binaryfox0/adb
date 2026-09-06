@@ -147,7 +147,8 @@ static void pubkey_command(
     adb_error_t err = ADB_ERR_OK;
     adb_ctx_t *ctx = NULL;
     adb_key_t *key = NULL;
-    char *pubkey = NULL;
+    uint8_t pubkey[2048] = {0};
+    size_t pubkey_size = 0;
 
     (void)args;
 
@@ -155,7 +156,8 @@ static void pubkey_command(
             "failed to create libadb context", err, cleanup);
     CHECK(adb_key_load(&key, ctx, path),
             "failed to load adb private key", err, cleanup);
-    CHECK(adb_key_generate_pubkey(key, &pubkey),
+    CHECK(adb_key_generate_pubkey(
+                key, pubkey, sizeof(pubkey), &pubkey_size),
             "failed to generate public key from private key", err, cleanup);
 
     if(output)
@@ -171,7 +173,7 @@ static void pubkey_command(
             goto cleanup;
         }
 
-        pubkey_len = strlen(pubkey);
+        pubkey_len = strlen((char*)pubkey);
         if(fwrite(pubkey, 1, pubkey_len, file) != pubkey_len)
         {
             error("failed to write to output file");
@@ -184,7 +186,6 @@ static void pubkey_command(
         printf("%s\n", pubkey);
 
 cleanup:
-    adb__free(pubkey);  
     adb_key_destroy(key);
     adb_ctx_destroy(ctx);
 }
