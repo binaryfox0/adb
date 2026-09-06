@@ -8,6 +8,7 @@
 typedef struct adb_ctx adb_ctx_t;
 typedef struct adb_conn adb_conn_t;
 typedef struct adb_wired_info adb_wired_info_t;
+typedef struct adb_key adb_key_t; 
 
 typedef int (*adb_conn_read_fn)(
         void *userdata,
@@ -49,7 +50,8 @@ adb_error_t adb_conn_create_custom(
 adb_error_t adb_conn_pair(
         adb_conn_t *conn,
         const char *code,
-        const size_t code_len);
+        const size_t code_len,
+        adb_key_t *key);
 
 adb_error_t adb_conn_handshake(
         adb_conn_t *conn);

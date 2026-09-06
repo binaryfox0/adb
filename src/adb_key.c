@@ -1,11 +1,14 @@
 #include <adb/adb_key.h>
+#include "adb/adb_ctx.h"
 #include "adb_key_priv.h"
 
+#include <stdio.h>
 #include <stdint.h>  
 #include <stdbool.h>  
 #include <stddef.h>
 #include <string.h>  
   
+#include <time.h>
 #include <unistd.h>
 #include <pwd.h>
 
@@ -13,12 +16,17 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/asn1write.h>
+#include <mbedtls/x509_crt.h>
 #include <mbedtls/pem.h>
-
+#include <mbedtls/x509.h>
+#include <mbedtls/md.h>
+#include <mbedtls/oid.h>
 
 #include "adb_alloc_priv.h"
 #include "adb_ctx_priv.h"
 #include "adb_log_priv.h"
+
+#define ADB__CERT_LIFETIME (10 * 365 * 24 * 60 * 60)
 
 #define ADB__STRINGIFY_IMPL(x) #x
 #define ADB__STRINGIFY(x) ADB__STRINGIFY_IMPL(x)
@@ -392,11 +400,11 @@ adb_error_t adb_key_generate_pubkey(
             size - encoded_size, 
             " %s@%s", 
             pw->pw_name, hostname);
-
-uint8_t buf[4096] = {0};
-adb__key_write_pkcs8_pem(key, buf, sizeof(buf));
-adb__util_write_file("./adbkey.pem", buf, strlen((char*)buf));
     ADB__INFO("generated public key successfully");
+
+    uint8_t buf[4096] = {0};
+    adb__key_write_pkcs8_pem(key, buf, sizeof(buf));
+    adb__util_write_file("./adbkey.pem", buf, strlen((char*)buf));
     return ADB_ERR_OK;
 }
 
@@ -426,17 +434,6 @@ bool adb__key_write_pkcs8_pem(
     size_t content_len = 0;
     size_t der_len = 0;
     size_t pem_len = 0;
-
-    static const uint8_t rsa_encryption_oid[] = 
-    {
-        0x06, 0x09,
-        0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01
-    };
-
-    static const uint8_t null_params[] = {
-        0x05, 0x00
-    };
-
 
     end = der + sizeof(der);
     err = mbedtls_pk_write_key_der(&key->pk, der, sizeof(der));
@@ -470,16 +467,14 @@ bool adb__key_write_pkcs8_pem(
      *     }
      */
     if(
-            (err = mbedtls_asn1_write_raw_buffer(
+            (err = mbedtls_asn1_write_null(
                     &p, 
-                    der, 
-                    null_params, 
-                    sizeof(null_params))) < 0 ||
-            (err = mbedtls_asn1_write_raw_buffer(
-                    &p, 
+                    der)) < 0 ||
+            (err = mbedtls_asn1_write_oid(
+                    &p,
                     der,
-                    rsa_encryption_oid, 
-                    sizeof(rsa_encryption_oid))) < 0)
+                    MBEDTLS_OID_PKCS1_RSA,
+                    sizeof(MBEDTLS_OID_PKCS1_RSA) - 1)) < 0)
         goto fail;
 
     alg_id_len = (size_t)(alg_end - p);
@@ -536,4 +531,129 @@ bool adb__key_write_pkcs8_pem(
 fail:
     adb__log_err_mbedtls(err, "failed to write pkcs#8 pem from key");
     return false;
+}
+
+bool adb__key_write_x509_pem(
+        adb_key_t *key,
+        adb_ctx_t *ctx,
+        uint8_t *out,
+        const size_t out_size)
+{
+    bool ret = false;
+    int err = 0;
+    int64_t now = 0;
+    char not_before[16];
+    char not_after[16];
+
+    mbedtls_x509write_cert crt;
+    mbedtls_mpi serial;
+
+    mbedtls_x509write_crt_init(&crt);
+    mbedtls_mpi_init(&serial);
+
+    mbedtls_x509write_crt_set_version(
+            &crt,
+            MBEDTLS_X509_CRT_VERSION_3);
+
+    err = mbedtls_mpi_lset(&serial, 1);
+    if (err != 0) {
+        goto cleanup;
+    }
+
+    err = mbedtls_x509write_crt_set_serial(&crt, &serial);
+    if (err != 0) {
+        goto cleanup;
+    }
+
+    now = (int64_t) time(NULL);
+
+    {
+        struct tm tm_now;
+        struct tm tm_after;
+
+        if (gmtime_r((time_t *) &now, &tm_now) == NULL) {
+            err = -1;
+            goto cleanup;
+        }
+
+        int64_t after = now + ADB__CERT_LIFETIME;
+
+        if (gmtime_r((time_t *) &after, &tm_after) == NULL) {
+            err = -1;
+            goto cleanup;
+        }
+
+        strftime(not_before, sizeof(not_before),
+                 "%Y%m%d%H%M%S", &tm_now);
+
+        strftime(not_after, sizeof(not_after),
+                 "%Y%m%d%H%M%S", &tm_after);
+    }
+
+    err = mbedtls_x509write_crt_set_validity(
+            &crt,
+            not_before,
+            not_after);
+    if (err != 0) {
+        goto cleanup;
+    }
+
+    err = mbedtls_x509write_crt_set_subject_name(
+            &crt,
+            "C=US,O=Android,CN=Adb");
+    if (err != 0) {
+        goto cleanup;
+    }
+
+    err = mbedtls_x509write_crt_set_issuer_name(
+            &crt,
+            "C=US,O=Android,CN=Adb");
+    if (err != 0) {
+        goto cleanup;
+    }
+
+    mbedtls_x509write_crt_set_subject_key(&crt, &key->pk);
+    mbedtls_x509write_crt_set_issuer_key(&crt, &key->pk);
+
+    err = mbedtls_x509write_crt_set_basic_constraints(
+            &crt,
+            1,
+            -1);
+    if (err != 0) {
+        goto cleanup;
+    }
+
+    err = mbedtls_x509write_crt_set_key_usage(
+            &crt,
+            MBEDTLS_X509_KU_KEY_CERT_SIGN |
+            MBEDTLS_X509_KU_CRL_SIGN |
+            MBEDTLS_X509_KU_DIGITAL_SIGNATURE);
+    if (err != 0) {
+        goto cleanup;
+    }
+
+    err = mbedtls_x509write_crt_set_subject_key_identifier(&crt);
+    if (err != 0) {
+        goto cleanup;
+    }
+
+    mbedtls_x509write_crt_set_md_alg(
+            &crt,
+            MBEDTLS_MD_SHA256);
+
+    err = mbedtls_x509write_crt_pem(
+            &crt,
+            out,
+            out_size,
+            mbedtls_ctr_drbg_random,
+            &ctx->drbg);
+    if(err != 0)
+        goto cleanup;
+
+    ret = true;
+
+cleanup:
+    mbedtls_mpi_free(&serial);
+    mbedtls_x509write_crt_free(&crt);
+    return ret;
 }

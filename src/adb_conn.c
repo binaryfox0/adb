@@ -19,6 +19,7 @@
 #include "adb_error_priv.h"
 #include "adb_query_priv.h"
 #include "adb_packet.h"
+#include "adb_key_priv.h"
 
 #include "adb_transport.h"
 #include "adb_tls.h"
@@ -202,10 +203,14 @@ static void adb__print_keying_material(
 adb_error_t adb_conn_pair(
         adb_conn_t *conn,
         const char *code,
-        const size_t code_len)
+        const size_t code_len,
+        adb_key_t *key)
 {
     adb_error_t res = ADB_ERR_OK;
     uint8_t keying_material[ADB__TLS_EXPORTED_KEY_SIZE] = {0};
+    uint8_t private_key[4096] = {0};
+    uint8_t x509_cert[4096] = {0};
+
     if(!conn || !adb__verify_pairing_code(code, code_len))
         return ADB_ERR_PARAM;
     if(!conn->tls.initialized)
@@ -225,6 +230,9 @@ adb_error_t adb_conn_pair(
         return res;
 
     adb__tls_export_keying_material(&conn->tls, keying_material);
+    adb__key_write_x509_pem(key, conn->ctx, x509_cert, sizeof(x509_cert));
+    adb__key_write_pkcs8_pem(key, private_key, sizeof(private_key));
+
     adb__print_keying_material(keying_material);
 
     ADB__INFO("pairing wireless device successfully");
