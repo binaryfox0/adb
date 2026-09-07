@@ -3,7 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "spake2_sha512.h"
+#include <mbedtls/sha512.h>
+
 #include "spake2_sc.h"
 #include "spake2_ge.h"
 #include "spake2_u256.h"
@@ -12,6 +13,7 @@
 #define SPAKE2_SCALAR_LEN        32
 #define SPAKE2_MSG_LEN           32
 
+#define SPAKE2__SHA512_DIGEST_LENGTH 64
 typedef enum
 {
     SPAKE2_STATE_INIT,
@@ -320,7 +322,6 @@ static const uint8_t spake2__m_small_precomp[15 * 2 * 32] = {
     0xa6, 0x76, 0x81, 0x28, 0xb2, 0x65, 0xe8, 0x47, 0x14, 0xc6, 0x39, 0x06,
 };
 
-
 int spake2_generate_msg(
         spake2_ctx_t *ctx, 
         uint8_t *out, 
@@ -353,7 +354,8 @@ int spake2_generate_msg(
     spake2__sc_copy(ctx->private_key, private_tmp);
 
     spake2__ge_scalarmult_base(&P, ctx->private_key);
-    spake2__sha512(password, password_len, password_tmp);
+    mbedtls_sha512(password, 
+            password_len, password_tmp, 0);
     memcpy(ctx->password_hash, password_tmp, SPAKE2__SHA512_DIGEST_LENGTH);
     spake2__sc_reduce(password_tmp);
     memcpy(password_scalar, password_tmp, sizeof(spake2__u256_t));
@@ -404,7 +406,7 @@ int spake2_generate_msg(
 }
 
 static void update_with_length_prefix(
-        spake2__sha512_ctx_t *ctx, 
+        mbedtls_sha512_context *sha, 
         const uint8_t *data,
         const size_t len) 
 {
@@ -417,8 +419,8 @@ static void update_with_length_prefix(
     l >>= 8;
   }
 
-  spake2__sha512_update(ctx, len_le, sizeof(len_le));
-  spake2__sha512_update(ctx, data, len);
+    mbedtls_sha512_update(sha, len_le, sizeof(len_le));
+    mbedtls_sha512_update(sha, data, len);
 }
 
 int SPAKE2_process_msg(
@@ -470,8 +472,8 @@ int SPAKE2_process_msg(
     uint8_t dh_shared_encoded[32];
     spake2__ge_tobytes(dh_shared_encoded, &dh_shared);
 
-    spake2__sha512_ctx_t sha;
-    spake2__sha512_init(&sha);
+    mbedtls_sha512_context sha = {0};
+    mbedtls_sha512_init(&sha);
     if (ctx->my_role == SPAKE2_ROLE_ALICE) {
      update_with_length_prefix(&sha, ctx->my_name, ctx->my_name_len);
      update_with_length_prefix(&sha, ctx->their_name, ctx->their_name_len);
@@ -488,7 +490,7 @@ int SPAKE2_process_msg(
                                      sizeof(ctx->password_hash));
 
     uint8_t key[SPAKE2__SHA512_DIGEST_LENGTH];
-    spake2__sha512_finish(&sha, key);
+    mbedtls_sha512_finish(&sha, key);
 
     size_t to_copy = max_out_key_len;
     if (to_copy > sizeof(key)) {
