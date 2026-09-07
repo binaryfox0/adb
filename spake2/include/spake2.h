@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#define SPAKE2_MAX_MESSAGE_LENGTH 32
 #define SPAKE2_RANDOM_DATA_LENGTH 64
 
 typedef enum

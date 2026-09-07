@@ -7,6 +7,8 @@
 
 #include <mbedtls/error.h>
 
+#include "adb_utils.h"
+
 static adb_log_fn adb__log_callback = NULL;
 static void *adb__log_userdata = NULL;
 static adb_log_level_t adb__log_level = ADB_LOG_ERROR;
@@ -86,4 +88,112 @@ void adb__log_err_errno(
     adb__vlog(ADB_LOG_ERROR, fmt, va);
     va_end(va);
     ADB__INFO("reason: %s", strerror(errno));
+}
+
+void adb__log_err_adb(
+        const adb_error_t err,
+        const char *fmt,
+        ...)
+{
+    va_list va;
+
+    va_start(va, fmt);
+    adb__vlog(ADB_LOG_ERROR, fmt, va);
+    va_end(va);
+    ADB__INFO("reason: %s", adb_strerror(err));
+}
+
+#define ADB__BYTES_PER_LINE 16
+
+void adb__log_print_payload(
+        const void *data,
+        const size_t size,
+        const char *fmt,
+        ...)
+{
+    va_list va;
+    const unsigned char *bytes = (const unsigned char *)data;
+
+    if(ADB_LOG_DEBUG < adb__log_level)
+        return;
+
+    va_start(va, fmt);
+    adb__vlog(ADB_LOG_DEBUG, fmt, va);
+    va_end(va);
+
+    const size_t line_count =
+        (size + (ADB__BYTES_PER_LINE - 1)) / ADB__BYTES_PER_LINE;
+
+    for(size_t i = 0; i < line_count; i++)
+    {
+        const size_t offset = i * ADB__BYTES_PER_LINE;
+        const size_t line_size =
+            (size - offset) < ADB__BYTES_PER_LINE
+                ? (size - offset)
+                : ADB__BYTES_PER_LINE;
+
+        /*
+         * 8  = offset
+         * 2  = spaces after offset
+         * 3  = "XX " for each byte
+         * 16 = ASCII representation
+         * 1  = NUL terminator
+         */
+        char buffer[8 + 2 + (ADB__BYTES_PER_LINE * 3)
+                       + ADB__BYTES_PER_LINE + 1];
+
+        size_t pos = 0;
+
+        /* Offset */
+        pos += (size_t)snprintf(
+            buffer + pos,
+            sizeof(buffer) - pos,
+            "%08zX  ",
+            offset);
+
+        /* Hex */
+        for(size_t j = 0; j < ADB__BYTES_PER_LINE; j++)
+        {
+            if(j < line_size)
+            {
+                pos += (size_t)snprintf(
+                    buffer + pos,
+                    sizeof(buffer) - pos,
+                    "%02X ",
+                    bytes[offset + j]);
+            }
+            else
+            {
+                pos += (size_t)snprintf(
+                    buffer + pos,
+                    sizeof(buffer) - pos,
+                    "   ");
+            }
+        }
+
+        /* ASCII */
+        for(size_t j = 0; j < ADB__BYTES_PER_LINE; j++)
+        {
+            if(j < line_size)
+            {
+                const unsigned char c = bytes[offset + j];
+
+                buffer[pos++] =
+                    (c >= 0x20 && c <= 0x7E)
+                        ? (char)c
+                        : '.';
+            }
+            else
+            {
+                buffer[pos++] = ' ';
+            }
+        }
+
+        buffer[pos] = '\0';
+
+        adb__log_callback(
+                adb__log_userdata, 
+                ADB_LOG_DEBUG, 
+                buffer);
+    }
 }

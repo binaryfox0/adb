@@ -63,6 +63,10 @@ void adb_set_alloc(
     adb__alloc = *alloc;
 }
 
+const adb_alloc_t *adb__alloc_get(void) {
+    return &adb__alloc;
+}
+
 void *adb__malloc(
         size_t size) {
     return adb__alloc.malloc(adb__alloc.userdata, size);

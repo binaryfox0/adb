@@ -88,6 +88,7 @@ static void pair_command(
     adb_error_t err = ADB_ERR_OK;
     adb_ctx_t *ctx = NULL;
     adb_conn_t *conn = NULL;
+    adb_key_t *key = NULL;
 
     (void)args;
 
@@ -129,10 +130,14 @@ static void pair_command(
     CHECK(adb_conn_create_wireless(&conn, ctx, 
                 host, (uint16_t)port), 
             "failed to create connection to wireless device", err, cleanup);
-    CHECK(adb_conn_pair(conn, code, 6), 
+   
+    CHECK(adb_key_generate(&key, ctx),
+            "failed to generate new key", err, cleanup);
+    CHECK(adb_conn_pair(conn, code, 6, key), 
             "failed to pair with given device", err, cleanup);
 
 cleanup:
+    adb_key_destroy(key);
     adb_conn_destroy(conn);
     adb_ctx_destroy(ctx);
 }

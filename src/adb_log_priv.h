@@ -1,6 +1,7 @@
 #ifndef ADB_LOG_PRIV_H
 #define ADB_LOG_PRIV_H
 
+#include <stddef.h>
 #include <adb/adb_log.h>
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -31,6 +32,17 @@ ADB__PRINTF(2, 3) void adb__log_err_mbedtls(
         ...);
 
 ADB__PRINTF(1, 2) void adb__log_err_errno(
+        ADB__PRINTF_FMT const char *fmt,
+        ...);
+
+ADB__PRINTF(2, 3) void adb__log_err_adb(
+        const adb_error_t err,
+        ADB__PRINTF_FMT const char *fmt,
+        ...);
+
+ADB__PRINTF(3, 4) void adb__log_print_payload(
+        const void *data,
+        const size_t size,
         ADB__PRINTF_FMT const char *fmt,
         ...);
 

@@ -8,6 +8,7 @@ add_library(spake2
     src/spake2_fe.c
     src/spake2_ge.c
     src/spake2_sc.c
+    src/spake2_u256.c
     src/spake2.c)
 target_include_directories(spake2 PUBLIC include/)
 

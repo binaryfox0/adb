@@ -86,6 +86,7 @@ add_library(adb
     src/adb_transport_custom.c
     src/adb_transport.c
     src/adb_tls.c
+    src/adb_utils.c
     src/adb_key.c
     src/adb_conn.c)
 target_include_directories(adb PUBLIC include/)
@@ -93,7 +94,8 @@ target_link_libraries(adb PRIVATE
     PkgConfig::libusb
     MbedTLS::mbedtls
     MbedTLS::mbedx509
-    MbedTLS::mbedcrypto)
+    MbedTLS::mbedcrypto
+    spake2)
 target_add_strict_flags(adb)
 target_add_asan(adb)
 

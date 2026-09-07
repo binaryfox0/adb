@@ -94,8 +94,8 @@ spake2_ctx_t *spake2_ctx_new(
 
     if(
             (my_role < 0 || my_role >= SPAKE2__ROLE_COUNT) ||
-            (!my_name ^ (my_name_len > 0)) ||
-            (!their_name ^ (their_name_len > 0)))
+            (!my_name ^ (my_name_len == 0)) ||
+            (!their_name ^ (their_name_len == 0)))
         return NULL;
     
     if(!allocator)
@@ -343,7 +343,7 @@ int spake2_generate_msg(
             ctx->state != SPAKE2_STATE_INIT ||
             !out || !out_len || 
             max_out_len < sizeof(ctx->my_msg) || 
-            (!password ^ (password_len > 0)) ||
+            (!password ^ (password_len == 0)) ||
             !random_data)
         return 0;
     
