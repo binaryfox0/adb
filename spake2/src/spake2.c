@@ -5,6 +5,7 @@
 
 #include <mbedtls/sha512.h>
 
+#include "spake2_ctime.h"
 #include "spake2_sc.h"
 #include "spake2_ge.h"
 #include "spake2_u256.h"
@@ -35,7 +36,7 @@ typedef struct spake2_ctx
     uint8_t private_key[SPAKE2_SCALAR_LEN];
 
     uint8_t password_hash[SPAKE2__SHA512_DIGEST_LENGTH];
-    spake2__sc_t password_scalar;
+    spake2__u256_t password_scalar;
 
     uint8_t my_msg[SPAKE2_MSG_LEN];
 
@@ -132,18 +133,6 @@ spake2_ctx_t *spake2_ctx_new(
     ctx->their_name_len = their_name_len;
 
     return ctx;
-}
-
-static void spake2__sc_lfshift3(
-        spake2__sc_t n) 
-{
-    uint8_t carry = 0;
-    for(int i = 0; i < SPAKE2__SC_LIMB_COUNT; i++) 
-    {
-        const uint8_t next_carry = n[i] >> 5;
-        n[i] = (n[i] << 3) | carry;
-        carry = next_carry;
-    }
 }
 
 _Static_assert(SPAKE2_RANDOM_DATA_LENGTH == sizeof(spake2__sc_wide_t), 
@@ -331,14 +320,18 @@ int spake2_generate_msg(
         const size_t password_len,
         const uint8_t random_data[SPAKE2_RANDOM_DATA_LENGTH])
 {
-    uint8_t private_tmp[SPAKE2_RANDOM_DATA_LENGTH] = {0};
-    uint8_t password_tmp[SPAKE2__SHA512_DIGEST_LENGTH] = {0};
+    spake2__sc_wide_t private_tmp = {0};
+    spake2__sc_t private_reduced = {0};
+
+    spake2__sc_wide_t password_tmp = {0};
+    spake2__sc_t password_reduced = {0};
+
     spake2__u256_t password_scalar = {0};
-    spake2__ge_p3 P = {0};
-    spake2__ge_p3 mask = {0};
-    spake2__ge_cached mask_cached = {0};
-    spake2__ge_p1p1 Pstar = {0};
-    spake2__ge_p2 Pstar_proj = {0};
+    spake2__ge_p3_t P = {0};
+    spake2__ge_p3_t mask = {0};
+    spake2__ge_cached_t mask_cached = {0};
+    spake2__ge_p1p1_t Pstar = {0};
+    spake2__ge_p2_t Pstar_proj = {0};
     if(
             !ctx || 
             ctx->state != SPAKE2_STATE_INIT ||
@@ -348,49 +341,49 @@ int spake2_generate_msg(
             !random_data)
         return 0;
     
-    memcpy(private_tmp, random_data, SPAKE2_RANDOM_DATA_LENGTH);
-    spake2__sc_reduce(private_tmp);
-    spake2__sc_lfshift3(private_tmp);
-    spake2__sc_copy(ctx->private_key, private_tmp);
+    memcpy(&private_tmp, random_data, SPAKE2_RANDOM_DATA_LENGTH);
+    spake2__sc_reduce(&private_reduced, &private_tmp);
+    spake2__sc_lshift3(&private_reduced, &private_reduced);
+    memcpy(ctx->private_key, &private_reduced, sizeof(ctx->private_key));
 
     spake2__ge_scalarmult_base(&P, ctx->private_key);
     mbedtls_sha512(password, 
-            password_len, password_tmp, 0);
-    memcpy(ctx->password_hash, password_tmp, SPAKE2__SHA512_DIGEST_LENGTH);
-    spake2__sc_reduce(password_tmp);
-    memcpy(password_scalar, password_tmp, sizeof(spake2__u256_t));
+            password_len, password_tmp.v, 0);
+    memcpy(ctx->password_hash, &password_tmp, SPAKE2__SHA512_DIGEST_LENGTH);
+    spake2__sc_reduce(&password_reduced, &password_tmp);
+    memcpy(&password_scalar, &password_reduced, sizeof(password_scalar));
 
     if(!ctx->disable_password_scalar_hack)
     {
         spake2__u256_t order =
-        {
+        {{
             0x5812631a5cf5d3edULL,
             0x14def9dea2f79cd6ULL,
             0x0000000000000000ULL,
             0x1000000000000000ULL
-        };
+        }};
         spake2__u256_t tmp = {0};
 
-        spake2__u256_cmov(tmp, order,
-                    spake2__constant_time_eq_w(password_scalar[0] & 1, 1));
-        spake2__u256_add(password_scalar, password_scalar, tmp);
+        spake2__u256_cmov(&tmp, &order,
+                    spake2__ctime_eq_w(password_scalar.v[0] & 1, 1));
+        spake2__u256_add(&password_scalar, &password_scalar, &tmp);
 
-        spake2__u256_add(order, order, order);
-        spake2__u256_0(tmp);
-        spake2__u256_cmov(tmp, order,
-                    spake2__constant_time_eq_w(password_scalar[0] & 2, 2));
-        spake2__u256_add(password_scalar, password_scalar, tmp);
+        spake2__u256_add(&order, &order, &order);
+        memset(&tmp, 0, sizeof(tmp));
+        spake2__u256_cmov(&tmp, &order,
+                    spake2__ctime_eq_w(password_scalar.v[0] & 2, 2));
+        spake2__u256_add(&password_scalar, &password_scalar, &tmp);
 
-        spake2__u256_add(order, order, order);
-        spake2__u256_0(tmp);
-        spake2__u256_cmov(tmp, order,
-                    spake2__constant_time_eq_w(password_scalar[0] & 4, 4));
-        spake2__u256_add(password_scalar, password_scalar, tmp);
+        spake2__u256_add(&order, &order, &order);
+        memset(&tmp, 0, sizeof(tmp));
+        spake2__u256_cmov(&tmp, &order,
+                    spake2__ctime_eq_w(password_scalar.v[0] & 4, 4));
+        spake2__u256_add(&password_scalar, &password_scalar, &tmp);
     }
 
-    memcpy(ctx->password_scalar, password_scalar, sizeof(spake2__sc_t));
+    ctx->password_scalar = password_scalar;
     spake2__ge_scalarmult_small_precomp(
-            &mask, ctx->password_scalar, 
+            &mask, (uint8_t*)&ctx->password_scalar, 
             ctx->my_role == SPAKE2_ROLE_ALICE ?
                 spake2__m_small_precomp :
                 spake2__n_small_precomp);
@@ -431,9 +424,9 @@ int SPAKE2_process_msg(
         const uint8_t *their_msg,
         size_t their_msg_len) 
 {
-    spake2__ge_p3 Qstar;
-    spake2__ge_p3 peers_mask = {0};
-    spake2__ge_cached peers_mask_cached = {0};
+    spake2__ge_p3_t Qstar;
+    spake2__ge_p3_t peers_mask = {0};
+    spake2__ge_cached_t peers_mask_cached = {0};
     if(
             !ctx || 
             ctx->state != SPAKE2_STATE_MSG_GENERATED ||
@@ -461,12 +454,12 @@ int SPAKE2_process_msg(
 
     spake2__ge_p3_to_cached(&peers_mask_cached, &peers_mask);
 
-    spake2__ge_p1p1 Q_compl;
-    spake2__ge_p3 Q_ext;
+    spake2__ge_p1p1_t Q_compl;
+    spake2__ge_p3_t Q_ext;
     spake2__ge_sub(&Q_compl, &Qstar, &peers_mask_cached);
     spake2__ge_p1p1_to_p3(&Q_ext, &Q_compl);
 
-    spake2__ge_p2 dh_shared;
+    spake2__ge_p2_t dh_shared;
     spake2__ge_scalarmult(&dh_shared, ctx->private_key, &Q_ext);
 
     uint8_t dh_shared_encoded[32];
@@ -498,7 +491,7 @@ int SPAKE2_process_msg(
     }
     memcpy(out_key, key, to_copy);
     *out_key_len = to_copy;
-    ctx->state = SPAKE2_STATE_MSG_GENERATED;
+    ctx->state = SPAKE2_STATE_KEY_GENERATED;
 
     return 1;
 }
