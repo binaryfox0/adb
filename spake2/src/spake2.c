@@ -438,7 +438,7 @@ int SPAKE2_process_msg(
             !ctx || 
             ctx->state != SPAKE2_STATE_MSG_GENERATED ||
             !out_key || !out_key_len || 
-            (!their_msg ^ (their_msg_len > 0)) || 
+            (!their_msg ^ (their_msg_len == 0)) || 
             their_msg_len != 32)
         return 0;
     if (ctx->state != SPAKE2_STATE_MSG_GENERATED || their_msg_len != 32) {

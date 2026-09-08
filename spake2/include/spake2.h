@@ -40,6 +40,14 @@ int spake2_generate_msg(
         const size_t password_len,
         const uint8_t random_data[SPAKE2_RANDOM_DATA_LENGTH]);
 
+int SPAKE2_process_msg(
+        spake2_ctx_t *ctx, 
+        uint8_t *out_key, 
+        size_t *out_key_len,
+        size_t max_out_key_len, 
+        const uint8_t *their_msg,
+        size_t their_msg_len);
+
 void spake2_ctx_free(
         spake2_ctx_t *ctx);
 
