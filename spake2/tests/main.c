@@ -107,7 +107,7 @@ static void test_spake2_alice_bob(void)
     /*
      * Exchange messages and derive the shared key.
      */
-    assert(SPAKE2_process_msg(
+    assert(spake2_process_msg(
         alice,
         alice_key,
         &alice_key_len,
@@ -115,7 +115,7 @@ static void test_spake2_alice_bob(void)
         bob_msg,
         bob_msg_len));
 
-    assert(SPAKE2_process_msg(
+    assert(spake2_process_msg(
         bob,
         bob_key,
         &bob_key_len,

@@ -50,8 +50,12 @@ typedef struct {
 } spake2__ge_cached_t;
 
 void spake2__ge_p1p1_to_p2(
-        spake2__ge_p2_t *r, 
-        const spake2__ge_p1p1_t *p);
+        spake2__ge_p2_t *out1, 
+        const spake2__ge_p1p1_t *arg1);
+
+void spake2__ge_p1p1_to_p3(
+        spake2__ge_p3_t *out1, 
+        const spake2__ge_p1p1_t *arg1); 
 
 void spake2__ge_p3_to_cached(
         spake2__ge_cached_t *out1, 
@@ -62,13 +66,31 @@ void spake2__ge_add(
         const spake2__ge_p3_t *arg1, 
         const spake2__ge_cached_t *arg2);
 
+void spake2__ge_sub(
+        spake2__ge_p1p1_t *out1, 
+        const spake2__ge_p3_t *arg1, 
+        const spake2__ge_cached_t *arg2);
+
 void spake2__ge_scalarmult_small_precomp(
         spake2__ge_p3_t *h, 
         const uint8_t a[32], 
         const uint8_t precomp_table[15 * 2 * 32]);
 
+void spake2__ge_scalarmult(
+        spake2__ge_p2_t *r, 
+        const spake2__sc_t *scalar,
+        const spake2__ge_p3_t *A);
+
 void spake2__ge_scalarmult_base(
         spake2__ge_p3_t *h, 
         const spake2__sc_t *a);
+
+int spake2__ge_from_bytes_vartime(
+        spake2__ge_p3_t *h, 
+        const uint8_t s[32]);
+
+void spake2__ge_to_bytes(
+        uint8_t s[32], 
+        const spake2__ge_p2_t *h);
 
 #endif

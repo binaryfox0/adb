@@ -1,6 +1,8 @@
 #include "spake2_sc.h"
 
-static uint64_t load_3(const uint8_t in[3]) {
+static uint64_t spake2__load3(
+        const uint8_t in[3]) 
+{
     uint64_t result;
     result = (uint64_t)in[0];
     result |= ((uint64_t)in[1]) << 8;
@@ -8,7 +10,9 @@ static uint64_t load_3(const uint8_t in[3]) {
     return result;
 }
 
-static uint64_t load_4(const uint8_t in[4]) {
+static uint64_t spake2__load4(
+        const uint8_t in[4]) 
+{
     uint64_t result;
     result = (uint64_t)in[0];
     result |= ((uint64_t)in[1]) << 8;
@@ -19,7 +23,7 @@ static uint64_t load_4(const uint8_t in[4]) {
 
 // int64_lshift21 returns `a << 21` but is defined when shifting bits into the
 // sign bit. This works around a language flaw in C.
-static int64_t int64_lshift21(int64_t a) {
+static int64_t spake2__int64_lshift21(int64_t a) {
     return (int64_t)((uint64_t)a << 21);
 }
 // The set of scalars is \Z/l
@@ -36,47 +40,31 @@ void spake2__sc_reduce(
         spake2__sc_t *out1,
         const spake2__sc_wide_t *arg1)
 {
-    int64_t s0 = 2097151 & load_3(arg1->v);
-    int64_t s1 = 2097151 & (load_4(arg1->v + 2) >> 5);
-    int64_t s2 = 2097151 & (load_3(arg1->v + 5) >> 2);
-    int64_t s3 = 2097151 & (load_4(arg1->v + 7) >> 7);
-    int64_t s4 = 2097151 & (load_4(arg1->v + 10) >> 4);
-    int64_t s5 = 2097151 & (load_3(arg1->v + 13) >> 1);
-    int64_t s6 = 2097151 & (load_4(arg1->v + 15) >> 6);
-    int64_t s7 = 2097151 & (load_3(arg1->v + 18) >> 3);
-    int64_t s8 = 2097151 & load_3(arg1->v + 21);
-    int64_t s9 = 2097151 & (load_4(arg1->v + 23) >> 5);
-    int64_t s10 = 2097151 & (load_3(arg1->v + 26) >> 2);
-    int64_t s11 = 2097151 & (load_4(arg1->v + 28) >> 7);
-    int64_t s12 = 2097151 & (load_4(arg1->v + 31) >> 4);
-    int64_t s13 = 2097151 & (load_3(arg1->v + 34) >> 1);
-    int64_t s14 = 2097151 & (load_4(arg1->v + 36) >> 6);
-    int64_t s15 = 2097151 & (load_3(arg1->v + 39) >> 3);
-    int64_t s16 = 2097151 & load_3(arg1->v + 42);
-    int64_t s17 = 2097151 & (load_4(arg1->v + 44) >> 5);
-    int64_t s18 = 2097151 & (load_3(arg1->v + 47) >> 2);
-    int64_t s19 = 2097151 & (load_4(arg1->v + 49) >> 7);
-    int64_t s20 = 2097151 & (load_4(arg1->v + 52) >> 4);
-    int64_t s21 = 2097151 & (load_3(arg1->v + 55) >> 1);
-    int64_t s22 = 2097151 & (load_4(arg1->v + 57) >> 6);
-    int64_t s23 = (load_4(arg1->v + 60) >> 3);
-    int64_t carry0;
-    int64_t carry1;
-    int64_t carry2;
-    int64_t carry3;
-    int64_t carry4;
-    int64_t carry5;
-    int64_t carry6;
-    int64_t carry7;
-    int64_t carry8;
-    int64_t carry9;
-    int64_t carry10;
-    int64_t carry11;
-    int64_t carry12;
-    int64_t carry13;
-    int64_t carry14;
-    int64_t carry15;
-    int64_t carry16;
+    int64_t s0 = 2097151 & spake2__load3(arg1->v);
+    int64_t s1 = 2097151 & (spake2__load4(arg1->v + 2) >> 5);
+    int64_t s2 = 2097151 & (spake2__load3(arg1->v + 5) >> 2);
+    int64_t s3 = 2097151 & (spake2__load4(arg1->v + 7) >> 7);
+    int64_t s4 = 2097151 & (spake2__load4(arg1->v + 10) >> 4);
+    int64_t s5 = 2097151 & (spake2__load3(arg1->v + 13) >> 1);
+    int64_t s6 = 2097151 & (spake2__load4(arg1->v + 15) >> 6);
+    int64_t s7 = 2097151 & (spake2__load3(arg1->v + 18) >> 3);
+    int64_t s8 = 2097151 & spake2__load3(arg1->v + 21);
+    int64_t s9 = 2097151 & (spake2__load4(arg1->v + 23) >> 5);
+    int64_t s10 = 2097151 & (spake2__load3(arg1->v + 26) >> 2);
+    int64_t s11 = 2097151 & (spake2__load4(arg1->v + 28) >> 7);
+    int64_t s12 = 2097151 & (spake2__load4(arg1->v + 31) >> 4);
+    int64_t s13 = 2097151 & (spake2__load3(arg1->v + 34) >> 1);
+    int64_t s14 = 2097151 & (spake2__load4(arg1->v + 36) >> 6);
+    int64_t s15 = 2097151 & (spake2__load3(arg1->v + 39) >> 3);
+    int64_t s16 = 2097151 & spake2__load3(arg1->v + 42);
+    int64_t s17 = 2097151 & (spake2__load4(arg1->v + 44) >> 5);
+    int64_t s18 = 2097151 & (spake2__load3(arg1->v + 47) >> 2);
+    int64_t s19 = 2097151 & (spake2__load4(arg1->v + 49) >> 7);
+    int64_t s20 = 2097151 & (spake2__load4(arg1->v + 52) >> 4);
+    int64_t s21 = 2097151 & (spake2__load3(arg1->v + 55) >> 1);
+    int64_t s22 = 2097151 & (spake2__load4(arg1->v + 57) >> 6);
+    int64_t s23 = (spake2__load4(arg1->v + 60) >> 3);
+    int64_t carry = 0;
 
     s11 += s23 * 666643;
     s12 += s23 * 470296;
@@ -126,40 +114,40 @@ void spake2__sc_reduce(
     s11 -= s18 * 683901;
     s18 = 0;
 
-    carry6 = (s6 + (1 << 20)) >> 21;
-    s7 += carry6;
-    s6 -= int64_lshift21(carry6);
-    carry8 = (s8 + (1 << 20)) >> 21;
-    s9 += carry8;
-    s8 -= int64_lshift21(carry8);
-    carry10 = (s10 + (1 << 20)) >> 21;
-    s11 += carry10;
-    s10 -= int64_lshift21(carry10);
-    carry12 = (s12 + (1 << 20)) >> 21;
-    s13 += carry12;
-    s12 -= int64_lshift21(carry12);
-    carry14 = (s14 + (1 << 20)) >> 21;
-    s15 += carry14;
-    s14 -= int64_lshift21(carry14);
-    carry16 = (s16 + (1 << 20)) >> 21;
-    s17 += carry16;
-    s16 -= int64_lshift21(carry16);
+    carry = (s6 + (1 << 20)) >> 21;
+    s7 += carry;
+    s6 -= spake2__int64_lshift21(carry);
+    carry = (s8 + (1 << 20)) >> 21;
+    s9 += carry;
+    s8 -= spake2__int64_lshift21(carry);
+    carry = (s10 + (1 << 20)) >> 21;
+    s11 += carry;
+    s10 -= spake2__int64_lshift21(carry);
+    carry = (s12 + (1 << 20)) >> 21;
+    s13 += carry;
+    s12 -= spake2__int64_lshift21(carry);
+    carry = (s14 + (1 << 20)) >> 21;
+    s15 += carry;
+    s14 -= spake2__int64_lshift21(carry);
+    carry = (s16 + (1 << 20)) >> 21;
+    s17 += carry;
+    s16 -= spake2__int64_lshift21(carry);
 
-    carry7 = (s7 + (1 << 20)) >> 21;
-    s8 += carry7;
-    s7 -= int64_lshift21(carry7);
-    carry9 = (s9 + (1 << 20)) >> 21;
-    s10 += carry9;
-    s9 -= int64_lshift21(carry9);
-    carry11 = (s11 + (1 << 20)) >> 21;
-    s12 += carry11;
-    s11 -= int64_lshift21(carry11);
-    carry13 = (s13 + (1 << 20)) >> 21;
-    s14 += carry13;
-    s13 -= int64_lshift21(carry13);
-    carry15 = (s15 + (1 << 20)) >> 21;
-    s16 += carry15;
-    s15 -= int64_lshift21(carry15);
+    carry = (s7 + (1 << 20)) >> 21;
+    s8 += carry;
+    s7 -= spake2__int64_lshift21(carry);
+    carry = (s9 + (1 << 20)) >> 21;
+    s10 += carry;
+    s9 -= spake2__int64_lshift21(carry);
+    carry = (s11 + (1 << 20)) >> 21;
+    s12 += carry;
+    s11 -= spake2__int64_lshift21(carry);
+    carry = (s13 + (1 << 20)) >> 21;
+    s14 += carry;
+    s13 -= spake2__int64_lshift21(carry);
+    carry = (s15 + (1 << 20)) >> 21;
+    s16 += carry;
+    s15 -= spake2__int64_lshift21(carry);
 
     s5 += s17 * 666643;
     s6 += s17 * 470296;
@@ -209,88 +197,43 @@ void spake2__sc_reduce(
     s5 -= s12 * 683901;
     s12 = 0;
 
-    carry0 = (s0 + (1 << 20)) >> 21;
-    s1 += carry0;
-    s0 -= int64_lshift21(carry0);
-    carry2 = (s2 + (1 << 20)) >> 21;
-    s3 += carry2;
-    s2 -= int64_lshift21(carry2);
-    carry4 = (s4 + (1 << 20)) >> 21;
-    s5 += carry4;
-    s4 -= int64_lshift21(carry4);
-    carry6 = (s6 + (1 << 20)) >> 21;
-    s7 += carry6;
-    s6 -= int64_lshift21(carry6);
-    carry8 = (s8 + (1 << 20)) >> 21;
-    s9 += carry8;
-    s8 -= int64_lshift21(carry8);
-    carry10 = (s10 + (1 << 20)) >> 21;
-    s11 += carry10;
-    s10 -= int64_lshift21(carry10);
+    carry = (s0 + (1 << 20)) >> 21;
+    s1 += carry;
+    s0 -= spake2__int64_lshift21(carry);
+    carry = (s2 + (1 << 20)) >> 21;
+    s3 += carry;
+    s2 -= spake2__int64_lshift21(carry);
+    carry = (s4 + (1 << 20)) >> 21;
+    s5 += carry;
+    s4 -= spake2__int64_lshift21(carry);
+    carry = (s6 + (1 << 20)) >> 21;
+    s7 += carry;
+    s6 -= spake2__int64_lshift21(carry);
+    carry = (s8 + (1 << 20)) >> 21;
+    s9 += carry;
+    s8 -= spake2__int64_lshift21(carry);
+    carry = (s10 + (1 << 20)) >> 21;
+    s11 += carry;
+    s10 -= spake2__int64_lshift21(carry);
 
-    carry1 = (s1 + (1 << 20)) >> 21;
-    s2 += carry1;
-    s1 -= int64_lshift21(carry1);
-    carry3 = (s3 + (1 << 20)) >> 21;
-    s4 += carry3;
-    s3 -= int64_lshift21(carry3);
-    carry5 = (s5 + (1 << 20)) >> 21;
-    s6 += carry5;
-    s5 -= int64_lshift21(carry5);
-    carry7 = (s7 + (1 << 20)) >> 21;
-    s8 += carry7;
-    s7 -= int64_lshift21(carry7);
-    carry9 = (s9 + (1 << 20)) >> 21;
-    s10 += carry9;
-    s9 -= int64_lshift21(carry9);
-    carry11 = (s11 + (1 << 20)) >> 21;
-    s12 += carry11;
-    s11 -= int64_lshift21(carry11);
-
-    s0 += s12 * 666643;
-    s1 += s12 * 470296;
-    s2 += s12 * 654183;
-    s3 -= s12 * 997805;
-    s4 += s12 * 136657;
-    s5 -= s12 * 683901;
-    s12 = 0;
-
-    carry0 = s0 >> 21;
-    s1 += carry0;
-    s0 -= int64_lshift21(carry0);
-    carry1 = s1 >> 21;
-    s2 += carry1;
-    s1 -= int64_lshift21(carry1);
-    carry2 = s2 >> 21;
-    s3 += carry2;
-    s2 -= int64_lshift21(carry2);
-    carry3 = s3 >> 21;
-    s4 += carry3;
-    s3 -= int64_lshift21(carry3);
-    carry4 = s4 >> 21;
-    s5 += carry4;
-    s4 -= int64_lshift21(carry4);
-    carry5 = s5 >> 21;
-    s6 += carry5;
-    s5 -= int64_lshift21(carry5);
-    carry6 = s6 >> 21;
-    s7 += carry6;
-    s6 -= int64_lshift21(carry6);
-    carry7 = s7 >> 21;
-    s8 += carry7;
-    s7 -= int64_lshift21(carry7);
-    carry8 = s8 >> 21;
-    s9 += carry8;
-    s8 -= int64_lshift21(carry8);
-    carry9 = s9 >> 21;
-    s10 += carry9;
-    s9 -= int64_lshift21(carry9);
-    carry10 = s10 >> 21;
-    s11 += carry10;
-    s10 -= int64_lshift21(carry10);
-    carry11 = s11 >> 21;
-    s12 += carry11;
-    s11 -= int64_lshift21(carry11);
+    carry = (s1 + (1 << 20)) >> 21;
+    s2 += carry;
+    s1 -= spake2__int64_lshift21(carry);
+    carry = (s3 + (1 << 20)) >> 21;
+    s4 += carry;
+    s3 -= spake2__int64_lshift21(carry);
+    carry = (s5 + (1 << 20)) >> 21;
+    s6 += carry;
+    s5 -= spake2__int64_lshift21(carry);
+    carry = (s7 + (1 << 20)) >> 21;
+    s8 += carry;
+    s7 -= spake2__int64_lshift21(carry);
+    carry = (s9 + (1 << 20)) >> 21;
+    s10 += carry;
+    s9 -= spake2__int64_lshift21(carry);
+    carry = (s11 + (1 << 20)) >> 21;
+    s12 += carry;
+    s11 -= spake2__int64_lshift21(carry);
 
     s0 += s12 * 666643;
     s1 += s12 * 470296;
@@ -300,72 +243,117 @@ void spake2__sc_reduce(
     s5 -= s12 * 683901;
     s12 = 0;
 
-    carry0 = s0 >> 21;
-    s1 += carry0;
-    s0 -= int64_lshift21(carry0);
-    carry1 = s1 >> 21;
-    s2 += carry1;
-    s1 -= int64_lshift21(carry1);
-    carry2 = s2 >> 21;
-    s3 += carry2;
-    s2 -= int64_lshift21(carry2);
-    carry3 = s3 >> 21;
-    s4 += carry3;
-    s3 -= int64_lshift21(carry3);
-    carry4 = s4 >> 21;
-    s5 += carry4;
-    s4 -= int64_lshift21(carry4);
-    carry5 = s5 >> 21;
-    s6 += carry5;
-    s5 -= int64_lshift21(carry5);
-    carry6 = s6 >> 21;
-    s7 += carry6;
-    s6 -= int64_lshift21(carry6);
-    carry7 = s7 >> 21;
-    s8 += carry7;
-    s7 -= int64_lshift21(carry7);
-    carry8 = s8 >> 21;
-    s9 += carry8;
-    s8 -= int64_lshift21(carry8);
-    carry9 = s9 >> 21;
-    s10 += carry9;
-    s9 -= int64_lshift21(carry9);
-    carry10 = s10 >> 21;
-    s11 += carry10;
-    s10 -= int64_lshift21(carry10);
+    carry = s0 >> 21;
+    s1 += carry;
+    s0 -= spake2__int64_lshift21(carry);
+    carry = s1 >> 21;
+    s2 += carry;
+    s1 -= spake2__int64_lshift21(carry);
+    carry = s2 >> 21;
+    s3 += carry;
+    s2 -= spake2__int64_lshift21(carry);
+    carry = s3 >> 21;
+    s4 += carry;
+    s3 -= spake2__int64_lshift21(carry);
+    carry = s4 >> 21;
+    s5 += carry;
+    s4 -= spake2__int64_lshift21(carry);
+    carry = s5 >> 21;
+    s6 += carry;
+    s5 -= spake2__int64_lshift21(carry);
+    carry = s6 >> 21;
+    s7 += carry;
+    s6 -= spake2__int64_lshift21(carry);
+    carry = s7 >> 21;
+    s8 += carry;
+    s7 -= spake2__int64_lshift21(carry);
+    carry = s8 >> 21;
+    s9 += carry;
+    s8 -= spake2__int64_lshift21(carry);
+    carry = s9 >> 21;
+    s10 += carry;
+    s9 -= spake2__int64_lshift21(carry);
+    carry = s10 >> 21;
+    s11 += carry;
+    s10 -= spake2__int64_lshift21(carry);
+    carry = s11 >> 21;
+    s12 += carry;
+    s11 -= spake2__int64_lshift21(carry);
 
-    out1->v[0] = s0 >> 0;
-    out1->v[1] = s0 >> 8;
-    out1->v[2] = (s0 >> 16) | (s1 << 5);
-    out1->v[3] = s1 >> 3;
-    out1->v[4] = s1 >> 11;
-    out1->v[5] = (s1 >> 19) | (s2 << 2);
-    out1->v[6] = s2 >> 6;
-    out1->v[7] = (s2 >> 14) | (s3 << 7);
-    out1->v[8] = s3 >> 1;
-    out1->v[9] = s3 >> 9;
-    out1->v[10] = (s3 >> 17) | (s4 << 4);
-    out1->v[11] = s4 >> 4;
-    out1->v[12] = s4 >> 12;
-    out1->v[13] = (s4 >> 20) | (s5 << 1);
-    out1->v[14] = s5 >> 7;
-    out1->v[15] = (s5 >> 15) | (s6 << 6);
-    out1->v[16] = s6 >> 2;
-    out1->v[17] = s6 >> 10;
-    out1->v[18] = (s6 >> 18) | (s7 << 3);
-    out1->v[19] = s7 >> 5;
-    out1->v[20] = s7 >> 13;
-    out1->v[21] = s8 >> 0;
-    out1->v[22] = s8 >> 8;
-    out1->v[23] = (s8 >> 16) | (s9 << 5);
-    out1->v[24] = s9 >> 3;
-    out1->v[25] = s9 >> 11;
-    out1->v[26] = (s9 >> 19) | (s10 << 2);
-    out1->v[27] = s10 >> 6;
-    out1->v[28] = (s10 >> 14) | (s11 << 7);
-    out1->v[29] = s11 >> 1;
-    out1->v[30] = s11 >> 9;
-    out1->v[31] = s11 >> 17;
+    s0 += s12 * 666643;
+    s1 += s12 * 470296;
+    s2 += s12 * 654183;
+    s3 -= s12 * 997805;
+    s4 += s12 * 136657;
+    s5 -= s12 * 683901;
+    s12 = 0;
+
+    carry = s0 >> 21;
+    s1 += carry;
+    s0 -= spake2__int64_lshift21(carry);
+    carry = s1 >> 21;
+    s2 += carry;
+    s1 -= spake2__int64_lshift21(carry);
+    carry = s2 >> 21;
+    s3 += carry;
+    s2 -= spake2__int64_lshift21(carry);
+    carry = s3 >> 21;
+    s4 += carry;
+    s3 -= spake2__int64_lshift21(carry);
+    carry = s4 >> 21;
+    s5 += carry;
+    s4 -= spake2__int64_lshift21(carry);
+    carry = s5 >> 21;
+    s6 += carry;
+    s5 -= spake2__int64_lshift21(carry);
+    carry = s6 >> 21;
+    s7 += carry;
+    s6 -= spake2__int64_lshift21(carry);
+    carry = s7 >> 21;
+    s8 += carry;
+    s7 -= spake2__int64_lshift21(carry);
+    carry = s8 >> 21;
+    s9 += carry;
+    s8 -= spake2__int64_lshift21(carry);
+    carry = s9 >> 21;
+    s10 += carry;
+    s9 -= spake2__int64_lshift21(carry);
+    carry = s10 >> 21;
+    s11 += carry;
+    s10 -= spake2__int64_lshift21(carry);
+
+    out1->v[0] = (uint8_t)(s0 >> 0);
+    out1->v[1] = (uint8_t)(s0 >> 8);
+    out1->v[2] = (uint8_t)((s0 >> 16) | (s1 << 5));
+    out1->v[3] = (uint8_t)(s1 >> 3);
+    out1->v[4] = (uint8_t)(s1 >> 11);
+    out1->v[5] = (uint8_t)((s1 >> 19) | (s2 << 2));
+    out1->v[6] = (uint8_t)(s2 >> 6);
+    out1->v[7] = (uint8_t)((s2 >> 14) | (s3 << 7));
+    out1->v[8] = (uint8_t)(s3 >> 1);
+    out1->v[9] = (uint8_t)(s3 >> 9);
+    out1->v[10] = (uint8_t)((s3 >> 17) | (s4 << 4));
+    out1->v[11] = (uint8_t)(s4 >> 4);
+    out1->v[12] = (uint8_t)(s4 >> 12);
+    out1->v[13] = (uint8_t)((s4 >> 20) | (s5 << 1));
+    out1->v[14] = (uint8_t)(s5 >> 7);
+    out1->v[15] = (uint8_t)((s5 >> 15) | (s6 << 6));
+    out1->v[16] = (uint8_t)(s6 >> 2);
+    out1->v[17] = (uint8_t)(s6 >> 10);
+    out1->v[18] = (uint8_t)((s6 >> 18) | (s7 << 3));
+    out1->v[19] = (uint8_t)(s7 >> 5);
+    out1->v[20] = (uint8_t)(s7 >> 13);
+    out1->v[21] = (uint8_t)(s8 >> 0);
+    out1->v[22] = (uint8_t)(s8 >> 8);
+    out1->v[23] = (uint8_t)((s8 >> 16) | (s9 << 5));
+    out1->v[24] = (uint8_t)(s9 >> 3);
+    out1->v[25] = (uint8_t)(s9 >> 11);
+    out1->v[26] = (uint8_t)((s9 >> 19) | (s10 << 2));
+    out1->v[27] = (uint8_t)(s10 >> 6);
+    out1->v[28] = (uint8_t)((s10 >> 14) | (s11 << 7));
+    out1->v[29] = (uint8_t)(s11 >> 1);
+    out1->v[30] = (uint8_t)(s11 >> 9);
+    out1->v[31] = (uint8_t)(s11 >> 17);
 }
 
 void spake2__sc_lshift3(
@@ -375,7 +363,7 @@ void spake2__sc_lshift3(
     for (unsigned i = 0; i < 32; i++) 
     {
         const uint8_t next_carry = out1->v[i] >> 5;
-        out1->v[i] = (out1->v[i] << 3) | carry;
+        out1->v[i] = (uint8_t)((out1->v[i] << 3) | carry);
         carry = next_carry;
     }
 }

@@ -263,9 +263,9 @@ static adb_error_t adb__read_pairing_header(
     header->type = type;
     header->version = version;
     header->payload_size = 
-        (uint32_t)(buffer[plsz_offset] << 24) ||
-        (uint32_t)(buffer[plsz_offset + 1] << 16) ||
-        (uint32_t)(buffer[plsz_offset + 2] << 8) ||
+        (uint32_t)(buffer[plsz_offset] << 24) |
+        (uint32_t)(buffer[plsz_offset + 1] << 16) |
+        (uint32_t)(buffer[plsz_offset + 2] << 8) |
         (uint32_t)buffer[plsz_offset + 3];
 
     ADB__INFO("read pairing header sucessfully");
@@ -521,21 +521,25 @@ adb_error_t adb__conn_read(
         void *buf,
         const size_t size)
 {
+    adb_error_t res = ADB_ERR_OK;
     if(!conn)
         return ADB_ERR_PARAM;
 
     if(conn->tls.initialized)
     {
-        return adb__tls_read(
+        res = adb__tls_read(
                 &conn->tls,
                 buf,
                 size);
+    } else {
+        res = adb__transport_read(
+                &conn->transport,
+                buf,
+                size);
     }
-
-    return adb__transport_read(
-            &conn->transport,
-            buf,
-            size);
+    
+    adb__log_print_payload(buf, size, "read data");
+    return res;
 }
 
 

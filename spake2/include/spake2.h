@@ -23,6 +23,10 @@ typedef struct
 
 typedef struct spake2_ctx spake2_ctx_t;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 spake2_ctx_t *spake2_ctx_new(
         const spake2_allocator_t *allocator,
         const spake2_role_t my_role,
@@ -40,7 +44,7 @@ int spake2_generate_msg(
         const size_t password_len,
         const uint8_t random_data[SPAKE2_RANDOM_DATA_LENGTH]);
 
-int SPAKE2_process_msg(
+int spake2_process_msg(
         spake2_ctx_t *ctx, 
         uint8_t *out_key, 
         size_t *out_key_len,
@@ -50,5 +54,9 @@ int SPAKE2_process_msg(
 
 void spake2_ctx_free(
         spake2_ctx_t *ctx);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

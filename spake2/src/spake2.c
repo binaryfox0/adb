@@ -9,7 +9,7 @@
 #include "spake2_sc.h"
 #include "spake2_ge.h"
 #include "spake2_u256.h"
-#include "spake2_constt.h"
+#include "spake2_ctime.h"
 
 #define SPAKE2_SCALAR_LEN        32
 #define SPAKE2_MSG_LEN           32
@@ -33,7 +33,7 @@ typedef struct spake2_ctx
     uint8_t *their_name;
     size_t their_name_len;
 
-    uint8_t private_key[SPAKE2_SCALAR_LEN];
+    spake2__sc_t private_key;
 
     uint8_t password_hash[SPAKE2__SHA512_DIGEST_LENGTH];
     spake2__u256_t password_scalar;
@@ -343,10 +343,10 @@ int spake2_generate_msg(
     
     memcpy(&private_tmp, random_data, SPAKE2_RANDOM_DATA_LENGTH);
     spake2__sc_reduce(&private_reduced, &private_tmp);
-    spake2__sc_lshift3(&private_reduced, &private_reduced);
-    memcpy(ctx->private_key, &private_reduced, sizeof(ctx->private_key));
+    spake2__sc_lshift3(&private_reduced);
+    ctx->private_key = private_reduced;
 
-    spake2__ge_scalarmult_base(&P, ctx->private_key);
+    spake2__ge_scalarmult_base(&P, &ctx->private_key);
     mbedtls_sha512(password, 
             password_len, password_tmp.v, 0);
     memcpy(ctx->password_hash, &password_tmp, SPAKE2__SHA512_DIGEST_LENGTH);
@@ -390,7 +390,7 @@ int spake2_generate_msg(
     spake2__ge_p3_to_cached(&mask_cached, &mask);
     spake2__ge_add(&Pstar, &P, &mask_cached);
     spake2__ge_p1p1_to_p2(&Pstar_proj, &Pstar);
-    spake2__ge_tobytes(ctx->my_msg, &Pstar_proj);
+    spake2__ge_to_bytes(ctx->my_msg, &Pstar_proj);
   
     memcpy(out, ctx->my_msg, sizeof(ctx->my_msg));
     *out_len = sizeof(ctx->my_msg);
@@ -416,7 +416,7 @@ static void update_with_length_prefix(
     mbedtls_sha512_update(sha, data, len);
 }
 
-int SPAKE2_process_msg(
+int spake2_process_msg(
         spake2_ctx_t *ctx, 
         uint8_t *out_key, 
         size_t *out_key_len,
@@ -438,7 +438,7 @@ int SPAKE2_process_msg(
      return 0;
     }
 
-    if (!spake2__ge_frombytes_vartime(&Qstar, their_msg)) 
+    if (!spake2__ge_from_bytes_vartime(&Qstar, their_msg)) 
     {
         // Point received from peer was not on the curve.
         return 0;
@@ -447,7 +447,7 @@ int SPAKE2_process_msg(
     // Unmask peer's value.
     spake2__ge_scalarmult_small_precomp(
             &peers_mask, 
-            ctx->password_scalar,
+            (uint8_t*)&ctx->password_scalar,
             ctx->my_role == SPAKE2_ROLE_ALICE ? 
                 spake2__n_small_precomp : 
                 spake2__m_small_precomp);
@@ -460,10 +460,10 @@ int SPAKE2_process_msg(
     spake2__ge_p1p1_to_p3(&Q_ext, &Q_compl);
 
     spake2__ge_p2_t dh_shared;
-    spake2__ge_scalarmult(&dh_shared, ctx->private_key, &Q_ext);
+    spake2__ge_scalarmult(&dh_shared, &ctx->private_key, &Q_ext);
 
     uint8_t dh_shared_encoded[32];
-    spake2__ge_tobytes(dh_shared_encoded, &dh_shared);
+    spake2__ge_to_bytes(dh_shared_encoded, &dh_shared);
 
     mbedtls_sha512_context sha = {0};
     mbedtls_sha512_init(&sha);

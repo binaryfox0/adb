@@ -26,6 +26,10 @@ void spake2__fe_0(
 void spake2__fe_1(
         spake2__fe_t *out1);
 
+void spake2__fe_copy(
+        spake2__fe_t *out1, 
+        const spake2__fe_t *arg1);
+
 void spake2__fe_copy_lt(
         spake2__fe_loose_t *out1, 
         const spake2__fe_t *arg1);
@@ -40,6 +44,16 @@ void spake2__fe_loose_cmov(
         spake2__fe_loose_t *out1, 
         const spake2__fe_loose_t *arg1, 
         const uint64_t b);
+
+int spake2__fe_loose_is_nonzero(
+        const spake2__fe_loose_t *f);
+
+int spake2__fe_is_negative(
+        const spake2__fe_t *f);
+
+void spake2__fe_neg(
+        spake2__fe_loose_t *out1, 
+        const spake2__fe_t *arg1);
 
 void spake2__fe_add(
         spake2__fe_loose_t *out1, 
@@ -61,6 +75,11 @@ void spake2__fe_mul_ltt(
         const spake2__fe_t *arg1, 
         const spake2__fe_t *arg2);
 
+void spake2__fe_mul_ttt(
+        spake2__fe_t *out1, 
+        const spake2__fe_t *arg1, 
+        const spake2__fe_t *arg2);
+
 void spake2__fe_mul_ttl(
         spake2__fe_t *out1, 
         const spake2__fe_t *arg1, 
@@ -76,6 +95,26 @@ void spake2__fe_mul_tll(
         const spake2__fe_loose_t *arg1, 
         const spake2__fe_loose_t *arg2);
 
+void spake2__fe_sq_tt(
+        spake2__fe_t *h, 
+        const spake2__fe_t *f);
+
+void spake2__fe_sq_tl(
+        spake2__fe_t *h, 
+        const spake2__fe_loose_t *f);
+
+void spake2__fe_sq2_tt(
+        spake2__fe_t *h, 
+        const spake2__fe_t *f);
+
+void spake2__fe_pow22523(
+        spake2__fe_t *out, 
+        const spake2__fe_t *z);
+
+void spake2__fe_invert(
+        spake2__fe_t *out, 
+        const spake2__fe_t *z);
+
 void spake2__fe_carry(
         spake2__fe_t *out1, 
         const spake2__fe_loose_t *arg1);
@@ -83,5 +122,9 @@ void spake2__fe_carry(
 void spake2__fe_from_bytes(
         spake2__fe_t *out1, 
         const uint8_t arg1[32]);
+
+void spake2__fe_to_bytes(
+        uint8_t out1[32], 
+        const spake2__fe_t *arg1);
 
 #endif
