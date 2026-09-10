@@ -26,6 +26,11 @@ if(SPAKE2_BUILD_TESTS)
         URL
             "https://boringssl.googlesource.com/boringssl/+archive/825a42ab64264250e13bc4b94155d10ed9d92298.tar.gz"
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        PATCH_COMMAND
+            ${CMAKE_COMMAND}
+            -DBORINGSSL_SOURCE_DIR=<SOURCE_DIR>
+            -P
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_bssl.cmake
     )
 
     FetchContent_MakeAvailable(boringssl)

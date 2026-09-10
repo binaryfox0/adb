@@ -9,7 +9,8 @@ typedef struct {
 
 void spake2__u256_cmov(
         spake2__u256_t *out1,
-        spake2__u256_t *arg1,
+        const spake2__u256_t *arg1,
+        const spake2__u256_t *arg2,
         const uint64_t mask);
 
 void spake2__u256_add(

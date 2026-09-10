@@ -6,13 +6,14 @@
 
 void spake2__u256_cmov(
         spake2__u256_t *out1,
-        spake2__u256_t *arg1,
+        const spake2__u256_t *arg1,
+        const spake2__u256_t *arg2,
         const uint64_t mask)
 {
     for(unsigned i = 0; i < SPAKE2__ARRSZ(out1->v); i++)
     {
         out1->v[i] = spake2__ctime_select_w(mask, 
-                out1->v[i], arg1->v[i]);
+                arg1->v[i], arg2->v[i]);
     }
 }
 

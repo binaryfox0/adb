@@ -364,19 +364,19 @@ int spake2_generate_msg(
         }};
         spake2__u256_t tmp = {0};
 
-        spake2__u256_cmov(&tmp, &order,
+        spake2__u256_cmov(&tmp, &order, &tmp,
                     spake2__ctime_eq_w(password_scalar.v[0] & 1, 1));
         spake2__u256_add(&password_scalar, &password_scalar, &tmp);
 
         spake2__u256_add(&order, &order, &order);
         memset(&tmp, 0, sizeof(tmp));
-        spake2__u256_cmov(&tmp, &order,
+        spake2__u256_cmov(&tmp, &order, &tmp,
                     spake2__ctime_eq_w(password_scalar.v[0] & 2, 2));
         spake2__u256_add(&password_scalar, &password_scalar, &tmp);
 
         spake2__u256_add(&order, &order, &order);
         memset(&tmp, 0, sizeof(tmp));
-        spake2__u256_cmov(&tmp, &order,
+        spake2__u256_cmov(&tmp, &order, &tmp,
                     spake2__ctime_eq_w(password_scalar.v[0] & 4, 4));
         spake2__u256_add(&password_scalar, &password_scalar, &tmp);
     }
