@@ -1,151 +1,268 @@
-#include <assert.h>
-#include <stdint.h>
+#include "bssl_spake2.h"
+#include "my_spake2.h"
+
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 
-#include "spake2.h"
+#define TEST_PASSWORD_SIZE 70
 
-#define TEST_PASSWORD      "123456"
-#define TEST_ALICE_NAME    "alice"
-#define TEST_BOB_NAME      "bob"
-
-#define TEST_MSG_MAX       1024
-#define TEST_KEY_MAX       1024
-
-static void test_spake2_alice_bob(void)
+static void print_hex(
+        const char *name,
+        const uint8_t *data,
+        size_t len)
 {
-    spake2_ctx_t *alice;
-    spake2_ctx_t *bob;
-
-    uint8_t alice_random[SPAKE2_RANDOM_DATA_LENGTH];
-    uint8_t bob_random[SPAKE2_RANDOM_DATA_LENGTH];
-
-    uint8_t alice_msg[TEST_MSG_MAX];
-    uint8_t bob_msg[TEST_MSG_MAX];
-
-    uint8_t alice_key[TEST_KEY_MAX];
-    uint8_t bob_key[TEST_KEY_MAX];
-
-    size_t alice_msg_len;
-    size_t bob_msg_len;
-    size_t alice_key_len;
-    size_t bob_key_len;
-
-    const uint8_t *password;
-    size_t password_len;
-
     size_t i;
 
-    alice = NULL;
-    bob = NULL;
+    printf("%s (%zu bytes):\n", name, len);
 
-    alice_msg_len = 0;
-    bob_msg_len = 0;
-    alice_key_len = 0;
-    bob_key_len = 0;
+    for (i = 0; i < len; i++) {
+        printf("%02x", data[i]);
 
-    password = (const uint8_t *)TEST_PASSWORD;
-    password_len = sizeof(TEST_PASSWORD) - 1;
-
-    /*
-     * Fixed randomness makes the test completely deterministic.
-     *
-     * Alice and Bob MUST use different random values.
-     */
-    for (i = 0; i < sizeof(alice_random); ++i) {
-        alice_random[i] = (uint8_t)i;
-        bob_random[i] = (uint8_t)(0x80u + i);
+        if ((i + 1) % 32 == 0) {
+            putchar('\n');
+        }
     }
 
-    alice = spake2_ctx_new(
-        NULL,
-        SPAKE2_ROLE_ALICE,
-        (const uint8_t *)TEST_ALICE_NAME,
-        sizeof(TEST_ALICE_NAME) - 1,
-        (const uint8_t *)TEST_BOB_NAME,
-        sizeof(TEST_BOB_NAME) - 1);
+    if (len % 32 != 0) {
+        putchar('\n');
+    }
+}
 
-    assert(alice != NULL);
+static int test_bssl_alice_my_bob(
+        const uint8_t *password,
+        size_t password_len)
+{
+    uint8_t bssl_msg[32];
+    uint8_t my_msg[32];
+    uint8_t bssl_key[64];
+    uint8_t my_key[64];
+    size_t bssl_msg_len;
+    size_t my_msg_len;
+    size_t bssl_key_len;
+    size_t my_key_len;
+    int result;
 
-    bob = spake2_ctx_new(
-        NULL,
-        SPAKE2_ROLE_BOB,
-        (const uint8_t *)TEST_BOB_NAME,
-        sizeof(TEST_BOB_NAME) - 1,
-        (const uint8_t *)TEST_ALICE_NAME,
-        sizeof(TEST_ALICE_NAME) - 1);
-
-    assert(bob != NULL);
-
-    /*
-     * Generate Alice's SPAKE2 message.
-     */
-    assert(spake2_generate_msg(
-        alice,
-        alice_msg,
-        &alice_msg_len,
-        sizeof(alice_msg),
-        password,
-        password_len,
-        alice_random));
+    bssl_msg_len = 0;
+    my_msg_len = 0;
+    bssl_key_len = 0;
+    my_key_len = 0;
+    result = 0;
 
     /*
-     * Generate Bob's SPAKE2 message.
+     * BoringSSL = Alice
+     * My implementation = Bob
      */
-    assert(spake2_generate_msg(
-        bob,
-        bob_msg,
-        &bob_msg_len,
-        sizeof(bob_msg),
-        password,
-        password_len,
-        bob_random));
 
-    assert(alice_msg_len != 0);
-    assert(bob_msg_len != 0);
+    if (!bssl_spake2(
+                1,
+                password,
+                password_len,
+                bssl_msg,
+                &bssl_msg_len,
+                bssl_key,
+                &bssl_key_len,
+                NULL,
+                0)) {
+        return 0;
+    }
+
+    if (!my_spake2(
+                0,
+                password,
+                password_len,
+                my_msg,
+                &my_msg_len,
+                my_key,
+                &my_key_len,
+                bssl_msg,
+                bssl_msg_len)) {
+        return 0;
+    }
 
     /*
-     * Exchange messages and derive the shared key.
+     * We still need BoringSSL Alice to process
+     * My Bob message. The original BoringSSL
+     * context was already consumed, so create
+     * a fresh Alice context.
      */
-    assert(spake2_process_msg(
-        alice,
-        alice_key,
-        &alice_key_len,
-        sizeof(alice_key),
-        bob_msg,
-        bob_msg_len));
 
-    assert(spake2_process_msg(
-        bob,
-        bob_key,
-        &bob_key_len,
-        sizeof(bob_key),
-        alice_msg,
-        alice_msg_len));
+    if (!bssl_spake2(
+                1,
+                password,
+                password_len,
+                bssl_msg,
+                &bssl_msg_len,
+                bssl_key,
+                &bssl_key_len,
+                my_msg,
+                my_msg_len)) {
+        return 0;
+    }
+
+    if (bssl_key_len != my_key_len) {
+        printf("FAIL: key lengths differ: BSSL=%zu MY=%zu\n",
+                bssl_key_len,
+                my_key_len);
+        return 0;
+    }
+
+    if (memcmp(bssl_key, my_key, bssl_key_len) != 0) {
+        printf("FAIL: key mismatch\n");
+
+        print_hex("BSSL key", bssl_key, bssl_key_len);
+        print_hex("MY key", my_key, my_key_len);
+
+        return 0;
+    }
+
+    result = 1;
+
+    return result;
+}
+
+static int test_my_alice_bssl_bob(
+        const uint8_t *password,
+        size_t password_len)
+{
+    uint8_t my_msg[32];
+    uint8_t bssl_msg[32];
+    uint8_t my_key[64];
+    uint8_t bssl_key[64];
+    size_t my_msg_len;
+    size_t bssl_msg_len;
+    size_t my_key_len;
+    size_t bssl_key_len;
+
+    my_msg_len = 0;
+    bssl_msg_len = 0;
+    my_key_len = 0;
+    bssl_key_len = 0;
 
     /*
-     * Both parties MUST derive exactly the same key.
+     * My implementation = Alice
+     * BoringSSL = Bob
      */
-    assert(alice_key_len == bob_key_len);
-    assert(alice_key_len != 0);
 
-    assert(memcmp(
-        alice_key,
-        bob_key,
-        alice_key_len) == 0);
+    if (!my_spake2(
+                1,
+                password,
+                password_len,
+                my_msg,
+                &my_msg_len,
+                my_key,
+                &my_key_len,
+                NULL,
+                0)) {
+        return 0;
+    }
 
-    printf("SPAKE2 Alice/Bob test: PASS\n");
-    printf("message length: Alice=%zu Bob=%zu\n",
-           alice_msg_len, bob_msg_len);
-    printf("key length: %zu\n", alice_key_len);
+    if (!bssl_spake2(
+                0,
+                password,
+                password_len,
+                bssl_msg,
+                &bssl_msg_len,
+                bssl_key,
+                &bssl_key_len,
+                my_msg,
+                my_msg_len)) {
+        return 0;
+    }
 
-    spake2_ctx_free(alice);
-    spake2_ctx_free(bob);
+    /*
+     * Recreate My Alice context and process BSSL Bob's
+     * message.
+     */
+
+    if (!my_spake2(
+                1,
+                password,
+                password_len,
+                my_msg,
+                &my_msg_len,
+                my_key,
+                &my_key_len,
+                bssl_msg,
+                bssl_msg_len)) {
+        return 0;
+    }
+
+    if (my_key_len != bssl_key_len) {
+        printf("FAIL: key lengths differ: MY=%zu BSSL=%zu\n",
+                my_key_len,
+                bssl_key_len);
+        return 0;
+    }
+
+    if (memcmp(my_key, bssl_key, my_key_len) != 0) {
+        printf("FAIL: key mismatch\n");
+
+        print_hex("MY key", my_key, my_key_len);
+        print_hex("BSSL key", bssl_key, bssl_key_len);
+
+        return 0;
+    }
+
+    return 1;
 }
 
 int main(void)
 {
-    test_spake2_alice_bob();
+    uint8_t password[TEST_PASSWORD_SIZE];
+    size_t i;
+    int result;
 
-    return 0;
+    /*
+     * Simulate:
+     *
+     *     6-byte ASCII pairing code
+     *     +
+     *     64-byte TLS exporter
+     */
+    password[0] = '5';
+    password[1] = '1';
+    password[2] = '5';
+    password[3] = '1';
+    password[4] = '0';
+    password[5] = '9';
+
+    for (i = 6; i < sizeof(password); i++) {
+        password[i] = (uint8_t)i;
+    }
+
+    result = 1;
+
+    printf("SPAKE2 BoringSSL interoperability test\n");
+    printf("password length: %zu\n\n", sizeof(password));
+
+    printf("  BSSL Alice <-> MY Bob: ");
+
+    if (!test_bssl_alice_my_bob(
+                password,
+                sizeof(password))) {
+        printf("FAIL\n");
+        result = 0;
+    } else {
+        printf("OK\n");
+    }
+
+    printf("  MY Alice <-> BSSL Bob: ");
+
+    if (!test_my_alice_bssl_bob(
+                password,
+                sizeof(password))) {
+        printf("FAIL\n");
+        result = 0;
+    } else {
+        printf("OK\n");
+    }
+
+    if (result) {
+        printf("\nPASS\n");
+        return 0;
+    }
+
+    printf("\nFAIL\n");
+    return 1;
 }
