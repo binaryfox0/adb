@@ -385,11 +385,6 @@ adb_error_t adb_conn_pair(
     if(ret != ADB_ERR_OK)
         return ret;
 
-    adb__log_print_payload(
-            keying_material, 
-            ADB__TLS_EXPORTED_KEY_SIZE, 
-            "wireless device keying material");
-
     if(
             !adb__key_write_x509_pem(key, conn->ctx, 
                 x509_cert, sizeof(x509_cert)) ||
@@ -408,6 +403,11 @@ adb_error_t adb_conn_pair(
     memcpy(password, code, ADB__PAIRING_CODE_DIGITS);
     memcpy(password + ADB__PAIRING_CODE_DIGITS, 
             keying_material, sizeof(keying_material));
+    
+    adb__log_print_payload(
+            password, 
+            sizeof(password), 
+            "spake2 password");
 
     spake2 = spake2_ctx_create(
             &(spake2_allocator_t) {
