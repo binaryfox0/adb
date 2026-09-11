@@ -71,7 +71,7 @@ int my_spake2(
         their_name_len = sizeof(client_name);
     }
 
-    ctx = spake2_ctx_new(
+    ctx = spake2_ctx_create(
             NULL,
             role,
             my_name,

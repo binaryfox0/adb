@@ -268,6 +268,16 @@ static adb_error_t adb__read_pairing_header(
         (uint32_t)(buffer[plsz_offset + 2] << 8) |
         (uint32_t)buffer[plsz_offset + 3];
 
+    if(!ADB__IN_RANGE(header->payload_size, 1, 
+                ADB__MAX_PAIRING_PAYLOAD_SIZE))
+    {
+        ADB__ERROR("pairing paylod size not within a safe range");
+        ADB__INFO("range: [%d, %d], got: %u bytes",
+                1, ADB__MAX_PAIRING_PAYLOAD_SIZE,
+                header->payload_size);
+        return ADB_ERR_PROTOCOL;
+    }
+
     ADB__INFO("read pairing header sucessfully");
     return ADB_ERR_OK;
 }
@@ -297,12 +307,6 @@ static adb_error_t adb__write_pairing_header(
     buffer[plsz_offset + 2] = (header->payload_size & 0x0000FF00) >> 8;
     buffer[plsz_offset + 3] = (header->payload_size & 0x000000FF);
 
-    /*
-    adb__log_print_payload(
-            buffer, sizeof(buffer), 
-            "serialized sent pairing header");
-    */
-
     res = adb__conn_write(conn, buffer, sizeof(buffer));
     if(res != ADB_ERR_OK)
     {
@@ -313,7 +317,36 @@ static adb_error_t adb__write_pairing_header(
     ADB__INFO("wrote pairing header sucessfully");
     return ADB_ERR_OK;
 }
+/*
+static adb_error_t adb__pair_init_cipher(
+        spake2_ctx_t *spake2,
+        const uint8_t *their_msg,
+        const uint32_t their_msg_len)
+{
+    uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
+    size_t key_material_len = 0;
+    if(their_msg_len > SPAKE2_MAX_MESSAGE_LENGTH)
+    {
+        ADB__ERROR("their SPAKE2 message larger than max message size");
+        ADB__INFO("max size: %d bytes, got %u bytes",
+                SPAKE2_MAX_MESSAGE_LENGTH, their_msg_len);
+        return ADB_ERR_PROTOCOL;
+    }
 
+    if(!spake2_process_msg(
+                spake2, 
+                key_material, 
+                &key_material_len, 
+                sizeof(key_material),
+                their_msg, 
+                their_msg_len))
+    {
+        ADB__ERROR("failed to process their public key");
+        return ADB_ERR_CRYPTO;
+    }
+    return ADB_ERR_OK;
+}
+*/
 adb_error_t adb_conn_pair(
         adb_conn_t *conn,
         const char *code,
@@ -341,7 +374,6 @@ adb_error_t adb_conn_pair(
         return ADB_ERR_UNSUPPORTED;
 
     ADB__INFO("pairing wireless device with code \"%6s\"", code);
-
     
     ret = adb__tls_handshake(&conn->tls);
     if(ret != ADB_ERR_OK)
@@ -353,7 +385,6 @@ adb_error_t adb_conn_pair(
     if(ret != ADB_ERR_OK)
         return ret;
 
-    adb__tls_export_keying_material(&conn->tls, keying_material);
     adb__log_print_payload(
             keying_material, 
             ADB__TLS_EXPORTED_KEY_SIZE, 
@@ -365,6 +396,7 @@ adb_error_t adb_conn_pair(
             !adb__key_write_pkcs8_pem(key, 
                 private_key, sizeof(private_key)))
     {
+        ADB__ERROR("failed to create X509/PKCS#8 PEM");
         return ADB_ERR_CRYPTO;
     }
     
@@ -376,12 +408,8 @@ adb_error_t adb_conn_pair(
     memcpy(password, code, ADB__PAIRING_CODE_DIGITS);
     memcpy(password + ADB__PAIRING_CODE_DIGITS, 
             keying_material, sizeof(keying_material));
-    adb__log_print_payload(
-            password, 
-            sizeof(password), 
-            "spake2 password");
 
-    spake2 = spake2_ctx_new(
+    spake2 = spake2_ctx_create(
             &(spake2_allocator_t) {
                 .malloc = adb__alloc_get()->malloc,
                 .free = adb__alloc_get()->free,
@@ -389,19 +417,25 @@ adb_error_t adb_conn_pair(
             }, SPAKE2_ROLE_ALICE,
             client_name, sizeof(client_name),
             server_name, sizeof(server_name));
+    if(!spake2)
+    {
+        ADB__ERROR("failed to create SPAKE2 context");
+        ADB__INFO("reason: out of memory");
+        return ADB_ERR_NO_MEM;
+    }
 
-    spake2_generate_msg(
+    if(!spake2_generate_msg(
             spake2, 
             spake2_msg, 
             &msg_size, 
             sizeof(spake2_msg),
             password, 
             sizeof(password),
-            random_data);
-
-    adb__log_print_payload(
-            spake2_msg, msg_size, 
-            "spake2 message"); 
+            random_data))
+    {
+        ADB__ERROR("failed to generate SPAKE2 message");
+        goto cleanup;
+    }
 
     header.version = ADB__PAIRING_HEADER_VER;
     header.type = ADB__PAIRING_SPAKE2_MSG;
@@ -414,7 +448,7 @@ adb_error_t adb_conn_pair(
     ret = adb__conn_write(conn, spake2_msg, msg_size);
     if(ret != ADB_ERR_OK)
     {
-        adb__log_err_adb(ret, "failed to send spake2 message");
+        adb__log_err_adb(ret, "failed to send pairing payload");
         goto cleanup;
     }
 
@@ -435,16 +469,14 @@ adb_error_t adb_conn_pair(
     if(!pairing_payload)
         { ret = ADB_ERR_NO_MEM; goto cleanup; }
 
-    ret = adb__conn_read(conn, 
-            pairing_payload, header.payload_size);
+    ret = adb__conn_read(conn, pairing_payload, 
+            header.payload_size);
     if(ret != ADB_ERR_OK)
     {
         adb__log_err_adb(ret, "failed to read pairing payload");
         goto cleanup;
     }
-    adb__log_print_payload(
-            pairing_payload, header.payload_size, 
-            "response pairing payload");
+    //adb__pair_init_cipher(spake2, pairing_payload, header.payload_size);
     
     ADB__INFO("pairing wireless device successfully");
 

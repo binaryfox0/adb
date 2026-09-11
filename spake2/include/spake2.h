@@ -28,7 +28,7 @@ typedef struct spake2_ctx spake2_ctx_t;
 extern "C" {
 #endif
 
-spake2_ctx_t *spake2_ctx_new(
+spake2_ctx_t *spake2_ctx_create(
         const spake2_allocator_t *allocator,
         const spake2_role_t my_role,
         const uint8_t *my_name,
