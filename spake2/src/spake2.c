@@ -398,19 +398,21 @@ int spake2_generate_msg(
     return 1;
 }
 
-static void update_with_length_prefix(
+#define SPAKE2__MIN(a, b) ((a) < (b) ? (a) : (b))
+
+static void spake2__update(
         mbedtls_sha512_context *sha, 
         const uint8_t *data,
         const size_t len) 
 {
-  uint8_t len_le[8];
-  size_t l = len;
-  unsigned i;
+    uint8_t len_le[8] = {0};
+    size_t l = len;
 
-  for (i = 0; i < 8; i++) {
-    len_le[i] = l & 0xff;
-    l >>= 8;
-  }
+    for(int i = 0; i < 8; i++) 
+    {
+      len_le[i] = l & 0xff;
+      l >>= 8;
+    }
 
     mbedtls_sha512_update(sha, len_le, sizeof(len_le));
     mbedtls_sha512_update(sha, data, len);
@@ -424,9 +426,15 @@ int spake2_process_msg(
         const uint8_t *their_msg,
         size_t their_msg_len) 
 {
-    spake2__ge_p3_t Qstar;
+    spake2__ge_p3_t Qstar = {0};
     spake2__ge_p3_t peers_mask = {0};
     spake2__ge_cached_t peers_mask_cached = {0};
+    spake2__ge_p1p1_t Q_compl = {0};
+    spake2__ge_p3_t Q_ext = {0};
+    spake2__ge_p2_t dh_shared = {0};
+    uint8_t dh_shared_encoded[32] = {0};
+    mbedtls_sha512_context sha = {0};
+    uint8_t key[SPAKE2__SHA512_DIGEST_LENGTH] = {0};
     if(
             !ctx || 
             ctx->state != SPAKE2_STATE_MSG_GENERATED ||
@@ -434,9 +442,6 @@ int spake2_process_msg(
             (!their_msg ^ (their_msg_len == 0)) || 
             their_msg_len != 32)
         return 0;
-    if (ctx->state != SPAKE2_STATE_MSG_GENERATED || their_msg_len != 32) {
-     return 0;
-    }
 
     if (!spake2__ge_from_bytes_vartime(&Qstar, their_msg)) 
     {
@@ -454,41 +459,36 @@ int spake2_process_msg(
 
     spake2__ge_p3_to_cached(&peers_mask_cached, &peers_mask);
 
-    spake2__ge_p1p1_t Q_compl;
-    spake2__ge_p3_t Q_ext;
     spake2__ge_sub(&Q_compl, &Qstar, &peers_mask_cached);
     spake2__ge_p1p1_to_p3(&Q_ext, &Q_compl);
 
-    spake2__ge_p2_t dh_shared;
     spake2__ge_scalarmult(&dh_shared, &ctx->private_key, &Q_ext);
 
-    uint8_t dh_shared_encoded[32];
     spake2__ge_to_bytes(dh_shared_encoded, &dh_shared);
 
-    mbedtls_sha512_context sha = {0};
     mbedtls_sha512_init(&sha);
-    if (ctx->my_role == SPAKE2_ROLE_ALICE) {
-     update_with_length_prefix(&sha, ctx->my_name, ctx->my_name_len);
-     update_with_length_prefix(&sha, ctx->their_name, ctx->their_name_len);
-     update_with_length_prefix(&sha, ctx->my_msg, sizeof(ctx->my_msg));
-     update_with_length_prefix(&sha, their_msg, 32);
+    mbedtls_sha512_starts(&sha, 0);
+    if (ctx->my_role == SPAKE2_ROLE_ALICE) 
+    {
+        spake2__update(&sha, ctx->my_name, ctx->my_name_len);
+        spake2__update(&sha, ctx->their_name, ctx->their_name_len);
+        spake2__update(&sha, ctx->my_msg, sizeof(ctx->my_msg));
+        spake2__update(&sha, their_msg, 32);
     } else {
-     update_with_length_prefix(&sha, ctx->their_name, ctx->their_name_len);
-     update_with_length_prefix(&sha, ctx->my_name, ctx->my_name_len);
-     update_with_length_prefix(&sha, their_msg, 32);
-     update_with_length_prefix(&sha, ctx->my_msg, sizeof(ctx->my_msg));
+        spake2__update(&sha, ctx->their_name, ctx->their_name_len);
+        spake2__update(&sha, ctx->my_name, ctx->my_name_len);
+        spake2__update(&sha, their_msg, 32);
+        spake2__update(&sha, ctx->my_msg, sizeof(ctx->my_msg));
     }
-    update_with_length_prefix(&sha, dh_shared_encoded, sizeof(dh_shared_encoded));
-    update_with_length_prefix(&sha, ctx->password_hash,
-                                     sizeof(ctx->password_hash));
+    spake2__update(&sha, dh_shared_encoded, 
+            sizeof(dh_shared_encoded));
+    spake2__update(&sha, ctx->password_hash,
+            sizeof(ctx->password_hash));
 
-    uint8_t key[SPAKE2__SHA512_DIGEST_LENGTH];
+    // problem right here, not produce the same key
     mbedtls_sha512_finish(&sha, key);
 
-    size_t to_copy = max_out_key_len;
-    if (to_copy > sizeof(key)) {
-     to_copy = sizeof(key);
-    }
+    size_t to_copy =  SPAKE2__MIN(max_out_key_len, sizeof(key));
     memcpy(out_key, key, to_copy);
     *out_key_len = to_copy;
     ctx->state = SPAKE2_STATE_KEY_GENERATED;
