@@ -16,6 +16,7 @@
 #include "adb_ctx_priv.h"
 #include "adb_alloc_priv.h"
 #include "adb_aes.h"
+#include "adb_mdns.h"
 
 #define ADB__ENUM_KEY_VALUE(val) [(val)] = #val 
 
@@ -273,6 +274,7 @@ adb_error_t adb_pair(
 
     uint8_t *enc_their_info = NULL;
     adb__peer_info_t their_info = {0};
+    size_t guid_len = 0;
     if(!ctx || !adb__verify_pairing_code(code, code_len))
         return ADB_ERR_PARAM;
 
@@ -446,9 +448,19 @@ adb_error_t adb_pair(
         goto cleanup;
     }
 
+    while(guid_len < sizeof(their_info.data) && their_info.data[guid_len] != '\0')
+            guid_len++;
+    if(guid_len == sizeof(their_info.data))
+    {
+        ADB__ERROR("invalid peer info recieved");
+        ADB__INFO("reason: missing null byte for the data");
+        ret = ADB_ERR_PROTOCOL;
+        goto cleanup;
+    }
+
     adb__log_print_payload(
             &their_info, sizeof(their_info), "their info");
-    
+    adb__mdns_find_service((const char*)their_info.data, NULL); 
     ADB__INFO("pairing wireless device successfully");
 
 cleanup:

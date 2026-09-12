@@ -40,7 +40,8 @@ extern "C" {
 #define MDNS_STRING_ARGS(s) s.str, s.length
 #define MDNS_STRING_FORMAT(s) (int)((s).length), s.str
 
-#define MDNS_POINTER_OFFSET(p, ofs) ((void*)((char*)(p) + (ptrdiff_t)(ofs)))
+/* patched */
+#define MDNS_POINTER_OFFSET(p, ofs) ((void*)((char*)(uintptr_t)(p) + (ptrdiff_t)(ofs)))
 #define MDNS_POINTER_OFFSET_CONST(p, ofs) ((const void*)((const char*)(p) + (ptrdiff_t)(ofs)))
 #define MDNS_POINTER_DIFF(a, b) ((size_t)((const char*)(a) - (const char*)(b)))
 
@@ -1083,12 +1084,16 @@ mdns_multiquery_send(int sock, const mdns_query_t* query, size_t count, void* bu
 	struct sockaddr* saddr = (struct sockaddr*)&addr_storage;
 	socklen_t saddrlen = sizeof(addr_storage);
 	if (getsockname(sock, saddr, &saddrlen) == 0) {
-		if ((saddr->sa_family == AF_INET) &&
-		    (ntohs(((struct sockaddr_in*)saddr)->sin_port) == MDNS_PORT))
-			rclass &= ~MDNS_UNICAST_RESPONSE;
-		else if ((saddr->sa_family == AF_INET6) &&
-		         (ntohs(((struct sockaddr_in6*)saddr)->sin6_port) == MDNS_PORT))
-			rclass &= ~MDNS_UNICAST_RESPONSE;
+        /* patched */
+		if (saddr->sa_family == AF_INET) {
+            struct sockaddr_in *sin = (struct sockaddr_in*)&addr_storage;
+		    if((ntohs(sin->sin_port) == MDNS_PORT))
+    			rclass &= ~MDNS_UNICAST_RESPONSE;
+        } else if (saddr->sa_family == AF_INET6) {
+            struct sockaddr_in6 *sin6 = (struct sockaddr_in6*)&addr_storage;
+		    if(ntohs(sin6->sin6_port) == MDNS_PORT)
+    			rclass &= ~MDNS_UNICAST_RESPONSE;
+        }
 	}
 
 	struct mdns_header_t* header = (struct mdns_header_t*)buffer;
@@ -1113,7 +1118,8 @@ mdns_multiquery_send(int sock, const mdns_query_t* query, size_t count, void* bu
 		if (remain < 4)
 			return -1;
 		// Record type
-		data = mdns_htons(data, query[iq].type);
+        /* patched */
+		data = mdns_htons(data, (uint16_t)query[iq].type);
 		//! Optional unicast response based on local port, class IN
 		data = mdns_htons(data, rclass);
 	}
@@ -1202,7 +1208,8 @@ mdns_answer_add_question_unicast(void* buffer, size_t capacity, void* data,
 	if (remain < 4)
 		return 0;
 
-	data = mdns_htons(data, record_type);
+    /* patched */
+	data = mdns_htons(data, (uint16_t)record_type);
 	data = mdns_htons(data, MDNS_UNICAST_RESPONSE | MDNS_CLASS_IN);
 
 	return data;
@@ -1218,7 +1225,8 @@ mdns_answer_add_record_header(void* buffer, size_t capacity, void* data, mdns_re
 	if (remain < 10)
 		return 0;
 
-	data = mdns_htons(data, record.type);
+    /* patched */
+	data = mdns_htons(data, (uint16_t)record.type);
 	data = mdns_htons(data, record.rclass);
 	data = mdns_htonl(data, record.ttl);
 	data = mdns_htons(data, 0);  // Length, to be filled later
@@ -1271,6 +1279,10 @@ mdns_answer_add_record(void* buffer, size_t capacity, void* data, mdns_record_t 
 			data = MDNS_POINTER_OFFSET(data, 16);
 			break;
 
+        /* patched */
+        case MDNS_RECORDTYPE_IGNORE:
+        case MDNS_RECORDTYPE_TXT:
+        case MDNS_RECORDTYPE_ANY:
 		default:
 			break;
 	}

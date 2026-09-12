@@ -72,6 +72,7 @@ find_package(MbedTLS REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(libusb libusb-1.0 REQUIRED IMPORTED_TARGET)
 
+add_subdirectory(deps/mdns)
 add_subdirectory(spake2)
 
 add_library(adb
@@ -89,6 +90,7 @@ add_library(adb
     src/adb_utils.c
     src/adb_key.c
     src/adb_aes.c
+    src/adb_mdns.c
     src/adb_pair.c
     src/adb_conn.c)
 target_include_directories(adb PUBLIC include/)
@@ -97,7 +99,8 @@ target_link_libraries(adb PRIVATE
     MbedTLS::mbedtls
     MbedTLS::mbedx509
     MbedTLS::mbedcrypto
-    spake2)
+    spake2
+    mdns)
 target_add_strict_flags(adb)
 target_add_asan(adb)
 
