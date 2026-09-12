@@ -11,7 +11,7 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 
-#include "adb/adb_error.h"
+#include "adb_utils.h"
 #include "adb_log_priv.h"
 #include "adb_ctx_priv.h"
 #include "adb_alloc_priv.h"
