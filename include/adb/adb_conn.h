@@ -36,7 +36,7 @@ adb_error_t adb_conn_create_wired(
 adb_error_t adb_conn_create_wireless(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
-        const char *ip,
+        const char *host,
         const uint16_t port);
 
 adb_error_t adb_conn_create_custom(
@@ -47,11 +47,6 @@ adb_error_t adb_conn_create_custom(
         void *userdata,
         const adb_conn_profile_t profile);
 
-adb_error_t adb_conn_pair(
-        adb_conn_t *conn,
-        const char *code,
-        const size_t code_len,
-        adb_key_t *key);
 
 adb_error_t adb_conn_handshake(
         adb_conn_t *conn);

@@ -127,13 +127,9 @@ static void pair_command(
 
     CHECK(adb_ctx_create(&ctx), 
             "failed to create libadb context", err, cleanup);
-    CHECK(adb_conn_create_wireless(&conn, ctx, 
-                host, (uint16_t)port), 
-            "failed to create connection to wireless device", err, cleanup);
-   
     CHECK(adb_key_generate(&key, ctx),
             "failed to generate new key", err, cleanup);
-    CHECK(adb_conn_pair(conn, code, 6, key), 
+    CHECK(adb_pair(ctx, host, (uint16_t)port, code, 6, key), 
             "failed to pair with given device", err, cleanup);
 
 cleanup:

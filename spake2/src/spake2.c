@@ -11,9 +11,6 @@
 #include "spake2_u256.h"
 #include "spake2_ctime.h"
 
-#define SPAKE2_SCALAR_LEN        32
-#define SPAKE2_MSG_LEN           32
-
 #define SPAKE2__SHA512_DIGEST_LENGTH 64
 typedef enum
 {
@@ -38,10 +35,17 @@ typedef struct spake2_ctx
     uint8_t password_hash[SPAKE2__SHA512_DIGEST_LENGTH];
     spake2__u256_t password_scalar;
 
-    uint8_t my_msg[SPAKE2_MSG_LEN];
+    uint8_t my_msg[SPAKE2_MAX_MESSAGE_LENGTH];
 
     int disable_password_scalar_hack;
 } spake2_ctx_t;
+
+_Static_assert(SPAKE2_RANDOM_DATA_LENGTH == sizeof(spake2__sc_wide_t), 
+        "random data length doesn't match wide-limb scalar storage");
+_Static_assert(SPAKE2__SHA512_DIGEST_LENGTH == sizeof(spake2__sc_wide_t),
+        "sha512 digest length doesn't match wide-limb scalar storage");
+_Static_assert(sizeof(spake2__u256_t) == sizeof(spake2__sc_t),
+        "unsigned 256-bit size doesn't match wide-limb scalar storage");
 
 typedef void *(*spake2__memset_callback_t)(void *, int, size_t);
 static volatile spake2__memset_callback_t spake2__memset_callback = memset;
@@ -134,16 +138,6 @@ spake2_ctx_t *spake2_ctx_create(
 
     return ctx;
 }
-
-_Static_assert(SPAKE2_RANDOM_DATA_LENGTH == sizeof(spake2__sc_wide_t), 
-        "random data length doesn't match wide-limb scalar storage");
-_Static_assert(SPAKE2__SHA512_DIGEST_LENGTH == sizeof(spake2__sc_wide_t),
-        "sha512 digest length doesn't match wide-limb scalar storage");
-_Static_assert(sizeof(spake2__u256_t) == sizeof(spake2__sc_t),
-        "unsigned 256-bit size doesn't match wide-limb scalar storage");
-
-
-
 
 static const uint8_t spake2__n_small_precomp[15 * 2 * 32] = {
     0x20, 0x1b, 0xc5, 0xb3, 0x43, 0x17, 0x71, 0x10, 0x44, 0x1e, 0x73, 0xb3,

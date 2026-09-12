@@ -88,6 +88,8 @@ add_library(adb
     src/adb_tls.c
     src/adb_utils.c
     src/adb_key.c
+    src/adb_aes.c
+    src/adb_pair.c
     src/adb_conn.c)
 target_include_directories(adb PUBLIC include/)
 target_link_libraries(adb PRIVATE 

@@ -29,9 +29,6 @@
 
 #define ADB__CERT_LIFETIME (10 * 365 * 24 * 60 * 60)
 
-#define ADB__STRINGIFY_IMPL(x) #x
-#define ADB__STRINGIFY(x) ADB__STRINGIFY_IMPL(x)
-
 #define ADB__RSA_MODULUS_BITS   2048
 #define ADB__RSA_ALGORITHM      "RSA-" ADB__STRINGIFY(ADB__RSA_MODULUS_BITS)
 #define ADB__RSA_EXPONENT       65537
@@ -299,7 +296,7 @@ adb_error_t adb_key_generate_pubkey(
     char hostname[HOST_NAME_MAX + 1] = {0};
     size_t min_size = 0;
     
-    if(!key || (!buffer ^ (size == 0)) || !out_size)
+    if(!key || (!buffer ^ (size == 0)) || (!buffer & !out_size))
         return ADB_ERR_PARAM;
 
     ADB__INFO("generating public key from private key");
@@ -322,7 +319,8 @@ adb_error_t adb_key_generate_pubkey(
     if(min_size > size)
         return ADB_ERR_TOO_SMALL;
 
-    *out_size = min_size;
+    if(out_size)
+        *out_size = min_size;
     if(!buffer)
         return ADB_ERR_OK;
 
@@ -339,9 +337,6 @@ adb_error_t adb_key_generate_pubkey(
             pw->pw_name, hostname);
     ADB__INFO("generated public key successfully");
 
-    uint8_t buf[4096] = {0};
-    adb__key_write_pkcs8_pem(key, buf, sizeof(buf));
-    adb__util_write_file("./adbkey.pem", buf, strlen((char*)buf));
     return ADB_ERR_OK;
 }
 
@@ -470,127 +465,214 @@ fail:
     return false;
 }
 
+static int adb__key_x509write_cert(
+        adb_key_t *key,
+        mbedtls_x509write_cert *writer)
+{
+    int err = 0;
+    time_t now_time = 0;
+    time_t after_time = 0;
+    char not_before[16] = {0};
+    char not_after[16] = {0};
+
+    mbedtls_x509write_crt_set_version(
+            writer,
+            MBEDTLS_X509_CRT_VERSION_3);
+
+    now_time = time(NULL);
+    after_time = now_time + ADB__CERT_LIFETIME;
+
+    {
+        struct tm tm_now;
+        struct tm tm_after;
+
+        if(gmtime_r(&now_time, &tm_now) == NULL ||
+           gmtime_r(&after_time, &tm_after) == NULL)
+        {
+            err = -1;
+            goto fail;
+        }
+
+        if(strftime(
+                not_before,
+                sizeof(not_before),
+                "%Y%m%d%H%M%S",
+                &tm_now) == 0)
+        {
+            err = -1;
+            goto fail;
+        }
+
+        if(strftime(
+                not_after,
+                sizeof(not_after),
+                "%Y%m%d%H%M%S",
+                &tm_after) == 0)
+        {
+            err = -1;
+            goto fail;
+        }
+    }
+
+    err = mbedtls_x509write_crt_set_validity(
+            writer,
+            not_before,
+            not_after);
+    if (err != 0) 
+        goto fail;
+
+    err = mbedtls_x509write_crt_set_subject_name(
+            writer,
+            "C=US,O=Android,CN=Adb");
+    if (err != 0) 
+        goto fail;
+
+    err = mbedtls_x509write_crt_set_issuer_name(
+            writer,
+            "C=US,O=Android,CN=Adb");
+    if (err != 0) 
+        goto fail;
+
+    mbedtls_x509write_crt_set_subject_key(writer, &key->pk);
+    mbedtls_x509write_crt_set_issuer_key(writer, &key->pk);
+
+    err = mbedtls_x509write_crt_set_basic_constraints(
+            writer,
+            1,
+            -1);
+    if (err != 0) 
+        goto fail;
+
+    err = mbedtls_x509write_crt_set_key_usage(
+            writer,
+            MBEDTLS_X509_KU_KEY_CERT_SIGN |
+            MBEDTLS_X509_KU_CRL_SIGN |
+            MBEDTLS_X509_KU_DIGITAL_SIGNATURE);
+    if (err != 0) 
+        goto fail;
+
+    err = mbedtls_x509write_crt_set_subject_key_identifier(writer);
+    if (err != 0) 
+        goto fail;
+
+    mbedtls_x509write_crt_set_md_alg(
+            writer,
+            MBEDTLS_MD_SHA256);
+
+fail:
+    return err;
+}
+
 bool adb__key_write_x509_pem(
         adb_key_t *key,
         adb_ctx_t *ctx,
         uint8_t *out,
         const size_t out_size)
 {
-    bool ret = false;
     int err = 0;
-    int64_t now = 0;
-    char not_before[16];
-    char not_after[16];
+    mbedtls_x509write_cert writer = {0};
+    mbedtls_mpi serial = {0};
 
-    mbedtls_x509write_cert crt;
-    mbedtls_mpi serial;
-
-    mbedtls_x509write_crt_init(&crt);
+    mbedtls_x509write_crt_init(&writer);
     mbedtls_mpi_init(&serial);
 
-    mbedtls_x509write_crt_set_version(
-            &crt,
-            MBEDTLS_X509_CRT_VERSION_3);
-
     err = mbedtls_mpi_lset(&serial, 1);
-    if (err != 0) {
-        goto cleanup;
-    }
+    if (err != 0) 
+        goto fail;
 
-    err = mbedtls_x509write_crt_set_serial(&crt, &serial);
-    if (err != 0) {
-        goto cleanup;
-    }
+    err = mbedtls_x509write_crt_set_serial(&writer, &serial);
+    if (err != 0) 
+        goto fail;
 
-    now = (int64_t) time(NULL);
-
-    {
-        struct tm tm_now;
-        struct tm tm_after;
-
-        if (gmtime_r((time_t *) &now, &tm_now) == NULL) {
-            err = -1;
-            goto cleanup;
-        }
-
-        int64_t after = now + ADB__CERT_LIFETIME;
-
-        if (gmtime_r((time_t *) &after, &tm_after) == NULL) {
-            err = -1;
-            goto cleanup;
-        }
-
-        strftime(not_before, sizeof(not_before),
-                 "%Y%m%d%H%M%S", &tm_now);
-
-        strftime(not_after, sizeof(not_after),
-                 "%Y%m%d%H%M%S", &tm_after);
-    }
-
-    err = mbedtls_x509write_crt_set_validity(
-            &crt,
-            not_before,
-            not_after);
-    if (err != 0) {
-        goto cleanup;
-    }
-
-    err = mbedtls_x509write_crt_set_subject_name(
-            &crt,
-            "C=US,O=Android,CN=Adb");
-    if (err != 0) {
-        goto cleanup;
-    }
-
-    err = mbedtls_x509write_crt_set_issuer_name(
-            &crt,
-            "C=US,O=Android,CN=Adb");
-    if (err != 0) {
-        goto cleanup;
-    }
-
-    mbedtls_x509write_crt_set_subject_key(&crt, &key->pk);
-    mbedtls_x509write_crt_set_issuer_key(&crt, &key->pk);
-
-    err = mbedtls_x509write_crt_set_basic_constraints(
-            &crt,
-            1,
-            -1);
-    if (err != 0) {
-        goto cleanup;
-    }
-
-    err = mbedtls_x509write_crt_set_key_usage(
-            &crt,
-            MBEDTLS_X509_KU_KEY_CERT_SIGN |
-            MBEDTLS_X509_KU_CRL_SIGN |
-            MBEDTLS_X509_KU_DIGITAL_SIGNATURE);
-    if (err != 0) {
-        goto cleanup;
-    }
-
-    err = mbedtls_x509write_crt_set_subject_key_identifier(&crt);
-    if (err != 0) {
-        goto cleanup;
-    }
-
-    mbedtls_x509write_crt_set_md_alg(
-            &crt,
-            MBEDTLS_MD_SHA256);
+    err = adb__key_x509write_cert(key, &writer);
+    if(err != 0)
+        goto fail;
 
     err = mbedtls_x509write_crt_pem(
-            &crt,
+            &writer,
             out,
             out_size,
             mbedtls_ctr_drbg_random,
             &ctx->drbg);
     if(err != 0)
-        goto cleanup;
+        goto fail;
 
-    ret = true;
-
-cleanup:
     mbedtls_mpi_free(&serial);
-    mbedtls_x509write_crt_free(&crt);
-    return ret;
+    mbedtls_x509write_crt_free(&writer);
+    return true;
+
+fail:
+    adb__log_err_mbedtls(err, "failed to write X.509 PEM from key");
+    mbedtls_mpi_free(&serial);
+    mbedtls_x509write_crt_free(&writer);
+    return false;
+}
+
+mbedtls_pk_context *adb__key_get_pk(
+        adb_key_t *key)
+{
+    if(!key)
+        return NULL;
+    return &key->pk;
+}
+
+bool adb__key_create_x509(
+        adb_key_t *key,
+        adb_ctx_t *ctx,
+        mbedtls_x509_crt *crt)
+{
+    int err = 0;
+    size_t cert_len = 0;
+    uint8_t cert_der[4096] = {0};
+
+    mbedtls_x509write_cert writer;
+    mbedtls_mpi serial;
+
+    if(!key || !ctx || !crt)
+        return ADB_ERR_PARAM;
+
+    mbedtls_x509write_crt_init(&writer);
+    mbedtls_mpi_init(&serial);
+
+    err = mbedtls_mpi_lset(&serial, 1);
+    if(err != 0)
+        goto fail;
+
+    err = mbedtls_x509write_crt_set_serial(
+            &writer,
+            &serial);
+    if(err != 0)
+        goto fail;
+
+    err = adb__key_x509write_cert(key, &writer);
+    if(err != 0)
+        goto fail;
+
+    err = mbedtls_x509write_crt_der(
+            &writer,
+            cert_der,
+            sizeof(cert_der),
+            mbedtls_ctr_drbg_random,
+            &ctx->drbg);
+
+    if(err < 0)
+        goto fail;
+
+    cert_len = (size_t) err;
+    err = mbedtls_x509_crt_parse(
+            crt,
+            cert_der + sizeof(cert_der) - cert_len,
+            cert_len);
+    if(err != 0)
+        goto fail;
+
+    mbedtls_mpi_free(&serial);
+    mbedtls_x509write_crt_free(&writer);
+    return true;
+
+fail:
+    adb__log_err_mbedtls(err, "failed to create X.509 from key");
+    mbedtls_mpi_free(&serial);
+    mbedtls_x509write_crt_free(&writer);
+    return false;
 }
