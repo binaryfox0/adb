@@ -240,69 +240,48 @@ static bool adb__pair_check_packet(
     return true;
 }
 
-adb_error_t adb_pair(
+static adb_error_t adb__exchange_message(
+        adb_conn_t *conn,
         adb_ctx_t *ctx,
-        const char *host,
-        const uint16_t port,
         const char *code,
-        const size_t code_len,
-        adb_key_t *key)
+        uint8_t out_key_material[SPAKE2_MAX_KEY_LENGTH],
+        size_t *out_key_material_len)
 {
     static const uint8_t client_name[] = "adb pair client";
     static const uint8_t server_name[] = "adb pair server";
 
     adb_error_t ret = ADB_ERR_OK;
-    adb_conn_t *conn = NULL;
-    adb__tls_t *tls = NULL;
 
-    spake2_ctx_t *spake2 = NULL;
     int err = 0;
     uint8_t random_data[SPAKE2_RANDOM_DATA_LENGTH] = {0};
+    spake2_ctx_t *spake2 = NULL;
     uint8_t password[ADB__PAIR_CODE_DIGITS + ADB__TLS_EXPORTED_KEY_LENGTH] = {0};
     uint8_t my_msg[SPAKE2_MAX_MESSAGE_LENGTH] = {0};
     size_t my_msg_size = 0;
     
     adb__pair_packet_t pkt = {0};
     uint8_t *their_msg = NULL;
-    uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
-    size_t key_material_len = 0;
-    adb__aes_t aes = {0};
-    adb__peer_info_t my_info = {0};
-    uint8_t enc_my_info[ADB__AES_ENCYPTED_SIZE(sizeof(my_info))] = {0};
 
-    uint8_t *enc_their_info = NULL;
-    adb__peer_info_t their_info = {0};
-    size_t guid_len = 0;
-    if(!ctx || !adb__verify_pairing_code(code, code_len))
-        return ADB_ERR_PARAM;
+    ADB__INFO("exchanging SPAKE2 message with the device");
 
-    ADB__INFO("pairing wireless device with code \"%6s\"", code);
-    ret = adb_conn_create_wireless(&conn, ctx, host, port);
-    if(ret != ADB_ERR_OK)
-        return ret;
-    
-    tls = adb__conn_get_tls(conn); 
-    ret = adb__tls_handshake(tls, ctx, key);
-    if(ret != ADB_ERR_OK)
-        return ret;
-
-    // if(
-    //         !adb__key_write_x509_pem(key, ctx, 
-    //             x509_cert, sizeof(x509_cert)) ||
-    //         !adb__key_write_pkcs8_pem(key, 
-    //             private_key, sizeof(private_key)))
-    // {
-    //     ADB__ERROR("failed to create X509/PKCS#8 PEM");
-    //     return ADB_ERR_CRYPTO;
-    // }
-    
     memcpy(password, code, ADB__PAIR_CODE_DIGITS);
-    ret = adb__tls_export_keying_material(tls,
+    ret = adb__tls_export_keying_material(
+            adb__conn_get_tls(conn),
             password + ADB__PAIR_CODE_DIGITS);
     if(ret != ADB_ERR_OK)
         return ret;
-
     
+    err = mbedtls_ctr_drbg_random(
+            &ctx->drbg,
+            random_data,
+            sizeof(random_data));
+    if(err != 0)
+    {
+        adb__log_err_mbedtls(err, 
+                "failed to generate random data to generate message");
+        goto cleanup;
+    }
+
     adb__log_print_payload(
             password, 
             sizeof(password), 
@@ -323,16 +302,6 @@ adb_error_t adb_pair(
         return ADB_ERR_NO_MEM;
     }
     
-    err = mbedtls_ctr_drbg_random(
-            &ctx->drbg,
-            random_data,
-            sizeof(random_data));
-    if(err != 0)
-    {
-        adb__log_err_mbedtls(err, 
-                "failed to generate random data to generate message");
-        goto cleanup;
-    }
 
     if(!spake2_generate_msg(
             spake2, 
@@ -368,9 +337,9 @@ adb_error_t adb_pair(
 
     if(!spake2_process_msg(
                 spake2, 
-                key_material, 
-                &key_material_len, 
-                sizeof(key_material),
+                out_key_material, 
+                out_key_material_len, 
+                SPAKE2_MAX_KEY_LENGTH,
                 their_msg, 
                 pkt.size))
     {
@@ -379,6 +348,32 @@ adb_error_t adb_pair(
                               // it came from the device
         goto cleanup;
     }
+    
+    ADB__INFO("exchanged SPAKE2 message with the device successfully");
+
+cleanup:
+    spake2_ctx_free(spake2);
+    adb__free(their_msg);
+    return ret;
+}
+
+static adb_error_t adb__exchange_info(
+        adb_conn_t *conn,
+        const uint8_t *key_material,
+        const size_t key_material_len,
+        adb_key_t *key,
+        char out_guid[ADB__MEMSZ(adb__peer_info_t, data)])
+{
+    adb_error_t ret = ADB_ERR_OK;
+    adb__aes_t aes = {0};
+    adb__peer_info_t my_info = {0};
+    uint8_t enc_my_info[ADB__AES_ENCYPTED_SIZE(sizeof(my_info))] = {0};
+    adb__pair_packet_t pkt = {0};
+    uint8_t *enc_their_info = NULL;
+    adb__peer_info_t their_info = {0};
+    bool has_null = false;
+
+    ADB__INFO("exchanging info with device");
 
     ret = adb__aes_init(&aes, key_material, key_material_len);
     my_info.type = ADB__PEER_INFO_PUBLIC_KEY; 
@@ -427,6 +422,9 @@ adb_error_t adb_pair(
     if(ret != ADB_ERR_OK)
         goto cleanup;
 
+    adb__log_print_payload(
+            &their_info, sizeof(their_info), 
+            "their info");
     if(their_info.type >= ADB__PEER_INFO_COUNT)
     {
         ADB__ERROR("unsupported peer info type");
@@ -446,24 +444,80 @@ adb_error_t adb_pair(
         goto cleanup;
     }
 
-    while(guid_len < sizeof(their_info.data) && their_info.data[guid_len] != '\0')
-            guid_len++;
-    if(guid_len == sizeof(their_info.data))
+    for(size_t i = 0; i < sizeof(their_info.data); i++)
     {
-        ADB__ERROR("invalid peer info recieved");
+        if(their_info.data[i] == '\0')
+        {
+            has_null = true;
+            break;
+        }
+    }
+
+    if(!has_null)
+    {
+        ADB__ERROR("corrupted peer info was recieved");
         ADB__INFO("reason: missing null byte for the data");
         ret = ADB_ERR_PROTOCOL;
         goto cleanup;
     }
 
-    adb__log_print_payload(
-            &their_info, sizeof(their_info), "their info");
-    adb__mdns_find_service((const char*)their_info.data, NULL); 
-    ADB__INFO("pairing wireless device successfully");
+    memcpy(out_guid, their_info.data, sizeof(their_info.data));
+    ADB__INFO("exchanged info with the device guid=\"%s\" successfully",
+            out_guid);
 
 cleanup:
     adb__aes_destroy(&aes);
-    spake2_ctx_free(spake2);
-    adb__free(their_msg);
+    return ret;
+}
+
+
+adb_error_t adb_pair(
+        adb_ctx_t *ctx,
+        const char *host,
+        const uint16_t port,
+        const char *code,
+        const size_t code_len,
+        adb_key_t *key)
+{
+    adb_error_t ret = ADB_ERR_OK;
+    adb_conn_t *conn = NULL;
+
+    uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
+    size_t key_material_len = 0;
+    char device_guid[ADB__MEMSZ(adb__peer_info_t, data)] = {0};
+
+    if(!ctx || !adb__verify_pairing_code(code, code_len))
+        return ADB_ERR_PARAM;
+
+    ADB__INFO("pairing wireless device with code \"%6s\"", code);
+    ret = adb_conn_create_wireless(&conn, ctx, host, port);
+    if(ret != ADB_ERR_OK)
+        return ret;
+    
+    ret = adb__tls_handshake(adb__conn_get_tls(conn), ctx, key);
+    if(ret != ADB_ERR_OK)
+        goto cleanup;
+
+    ret = adb__exchange_message(
+            conn, ctx, code, 
+            key_material, 
+            &key_material_len);
+    if(ret != ADB_ERR_OK)
+        goto cleanup;
+
+    ret = adb__exchange_info(
+            conn, 
+            key_material,
+            key_material_len,
+            key,
+            device_guid);
+    if(ret != ADB_ERR_OK)
+        goto cleanup;
+
+    adb__mdns_find_service(device_guid, NULL); 
+    ADB__INFO("pairing wireless device successfully");
+
+cleanup:
+    adb_conn_destroy(conn);
     return ret;
 }

@@ -25,6 +25,8 @@ static int adb__tls_bio_send(
     err = tls->transport->write(
             tls->transport->userdata,
             buf, size);
+    if(err == ADB_ERR_WOULDBLOCK)
+        return MBEDTLS_ERR_SSL_WANT_WRITE;
 
     if(err != ADB_ERR_OK)
     {
@@ -53,6 +55,8 @@ static int adb__tls_bio_recv(
             buf,
             size);
 
+    if(err == ADB_ERR_WOULDBLOCK)
+        return MBEDTLS_ERR_SSL_WANT_READ;
     if(err != ADB_ERR_OK)
     {
         tls->bio_error = err;

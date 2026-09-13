@@ -8,10 +8,10 @@
 #define ADB__MIN(a, b) ((a) < (b) ? (a) : (b))
 #define ADB__IN_RANGE(val, start, end) ((val) >= (start) && (val) <= (end))
 #define ADB__CHECK_ENUM(val, pref) ((val) < 0 || (val) >= ADB__##pref##_COUNT)
+#define ADB__MEMSZ(s, m) (sizeof(((s*)0)->m))
 
 #define ADB__STRINGIFY_IMPL(x) #x
 #define ADB__STRINGIFY(x) ADB__STRINGIFY_IMPL(x)
-
 
 static inline uint32_t adb__endian_swap32(
         const uint32_t x)

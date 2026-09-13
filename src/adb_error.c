@@ -36,8 +36,13 @@ adb_error_t adb__error_from_errno(
     switch(error)
     {
         case ETIMEDOUT:
-        case EAGAIN:
             return ADB_ERR_TIMEOUT;
+// 
+//         case EAGAIN:
+// #if  EWOULDBLOCK != EAGAIN
+//         case EWOULDBLOCK:
+// #endif
+//             return ADB_ERR_WOULDBLOCK;
 
         case ECONNRESET:
         case ECONNABORTED:

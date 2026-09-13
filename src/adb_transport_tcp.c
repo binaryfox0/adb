@@ -18,27 +18,36 @@ static adb_error_t adb__tcp_read(
         size_t size)
 {
     int fd = (int)(uintptr_t)userdata;
+    uint8_t *data = buf;
+    size_t offset = 0;
     ssize_t ret = 0;
+
     if(fd < 0)
         return ADB_ERR_PARAM;
 
     if(!buf && size)
         return ADB_ERR_PARAM;
 
-    ret = recv(
-            fd,
-            buf,
-            size,
-            0);
+    while(offset < size)
+    {
+        ret = recv(fd, data + offset, size - offset, 0);
 
-    if(ret < 0)
-        return adb__error_from_errno(errno);
+        if(ret < 0)
+        {
+            if(errno == EAGAIN)
+                continue;
+#if EWOULDBLOCK != EAGAIN
+            if(errno == EWOULDBLOCK)
+                continue;
+#endif
+            return adb__error_from_errno(errno);
+        }
 
-    if(ret == 0)
-        return ADB_ERR_DISCONNECTED;
+        if(ret == 0)
+            return ADB_ERR_DISCONNECTED;
 
-    if((size_t)ret != size)
-        return ADB_ERR_IO;
+        offset += (size_t)ret;
+    }
 
     return ADB_ERR_OK;
 }
@@ -50,6 +59,8 @@ static adb_error_t adb__tcp_write(
         size_t size)
 {
     int fd = (int)(uintptr_t)userdata;
+    const uint8_t *data = buf;
+    size_t offset = 0;
     ssize_t ret = 0;
 
     if(fd < 0)
@@ -58,20 +69,26 @@ static adb_error_t adb__tcp_write(
     if(!buf && size)
         return ADB_ERR_PARAM;
 
-    ret = send(
-            fd,
-            buf,
-            size,
-            0);
+    while(offset < size)
+    {
+        ret = send(fd, data + offset, size - offset, 0);
 
-    if(ret < 0)
-        return adb__error_from_errno(errno);
+        if(ret < 0)
+        {
+            if(errno == EAGAIN)
+                continue;
+#if EWOULDBLOCK != EAGAIN
+            if(errno == EWOULDBLOCK)
+                continue;
+#endif
+            return adb__error_from_errno(errno);
+        }
 
-    if(ret == 0 && size != 0)
-        return ADB_ERR_DISCONNECTED;
+        if(ret == 0)
+            return ADB_ERR_DISCONNECTED;
 
-    if((size_t)ret != size)
-        return ADB_ERR_IO;
+        offset += (size_t)ret;
+    }
 
     return ADB_ERR_OK;
 }
