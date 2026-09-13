@@ -2,16 +2,15 @@
 #define ADB_MDNS_H
 
 #include <stdint.h>
+#ifdef _WIN32
+#   include <winsock2.h>
+#else
+#   include <sys/socket.h>
+#endif
 #include <adb/adb_error.h>
-
-typedef struct
-{
-    char *host;
-    uint16_t port;
-} adb__mdns_info_t;
 
 adb_error_t adb__mdns_find_service(
         const char *guid,
-        adb__mdns_info_t *out);
+        struct sockaddr *out);
 
 #endif

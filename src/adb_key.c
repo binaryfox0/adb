@@ -109,8 +109,6 @@ cleanup:
     return ret;
 }
 
-
-
 adb_error_t adb_key_load(
         adb_key_t **key,
         adb_ctx_t *ctx,
@@ -171,6 +169,158 @@ cleanup:
 
     return ret;
 }
+
+static adb_error_t adb__key_write_pkcs8_pem(
+        adb_key_t *key,
+        uint8_t *out,
+        const size_t out_size,
+        size_t *written)
+{
+    uint8_t der[ADB__RSA2048_DER_MAX] = {0};
+    uint8_t *end = NULL;
+    size_t pkcs1_len = 0;
+    int err = 0;
+    uint8_t *p = NULL;
+    uint8_t *alg_end = NULL;
+    size_t alg_id_len = 0;
+    size_t content_len = 0;
+    size_t der_len = 0;
+    size_t pem_len = 0;
+
+    if(!key || !out || out_size == 0)
+        return ADB_ERR_PARAM;
+
+    end = der + sizeof(der);
+    err = mbedtls_pk_write_key_der(&key->pk, der, sizeof(der));
+    if (err < 0) 
+        goto fail;
+
+    pkcs1_len = (size_t)err;
+    p = end - pkcs1_len;
+
+    /* privateKey OCTET STRING */
+    if(
+            (err = mbedtls_asn1_write_len(
+                    &p, 
+                    der, 
+                    pkcs1_len)) < 0 ||
+            (err = mbedtls_asn1_write_tag(
+                    &p,
+             der,
+                MBEDTLS_ASN1_OCTET_STRING)) < 0)
+        goto fail;
+
+    /* Everything after this point belongs to AlgorithmIdentifier,
+     * not to privateKey. */
+    alg_end = p;
+
+    /* 
+     * AlgorithmIdentifier:
+     *     SEQUENCE {
+     *         algorithm  OBJECT IDENTIFIER rsaEncryption,
+     *         parameters NULL
+     *     }
+     */
+    if(
+            (err = mbedtls_asn1_write_null(
+                    &p, 
+                    der)) < 0 ||
+            (err = mbedtls_asn1_write_oid(
+                    &p,
+                    der,
+                    MBEDTLS_OID_PKCS1_RSA,
+                    sizeof(MBEDTLS_OID_PKCS1_RSA) - 1)) < 0)
+        goto fail;
+
+    alg_id_len = (size_t)(alg_end - p);
+    if(
+            (err = mbedtls_asn1_write_len(
+                    &p, 
+                    der, 
+                    alg_id_len)) < 0 ||
+            (err = mbedtls_asn1_write_tag(
+                 &p,
+             der,
+               MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) < 0)
+        goto fail;
+
+    /* version INTEGER 0 */
+    err = mbedtls_asn1_write_int(&p, der, 0);
+    if (err < 0) 
+        goto fail;
+
+    /*
+     * PrivateKeyInfo:
+     *     SEQUENCE {
+     *         version
+     *         privateKeyAlgorithm
+     *         privateKey
+     *     }
+     */
+    content_len = (size_t)(end - p);
+    if(
+            (err = mbedtls_asn1_write_len(
+                    &p, 
+                    der, 
+                    content_len)) < 0 ||
+            (err = mbedtls_asn1_write_tag(
+                 &p,
+                 der,
+                 MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) < 0)
+        goto fail;
+
+    der_len = (size_t)(end - p);
+    err = mbedtls_pem_write_buffer(
+        "-----BEGIN PRIVATE KEY-----\n",
+        "-----END PRIVATE KEY-----\n",
+        p,
+        der_len,
+        out,
+        out_size,
+        &pem_len);
+    if(written)
+        *written = pem_len;
+    if (err != 0) 
+        goto fail;
+
+    return ADB_ERR_OK;
+
+fail:
+    adb__log_err_mbedtls(err, "failed to write pkcs#8 pem from key");
+    if(
+            err == MBEDTLS_ERR_ASN1_BUF_TOO_SMALL ||
+            err == MBEDTLS_ERR_PK_BUFFER_TOO_SMALL ||
+            err == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL)
+        return ADB_ERR_TOO_SMALL;
+    return ADB_ERR_CRYPTO;
+}
+
+adb_error_t adb_key_save(
+        adb_key_t *key,
+        const char *path)
+{
+    adb_error_t res = ADB_ERR_OK;
+    uint8_t buffer[4096] = {0};
+    size_t written = 0;
+    if(!key || !path)
+        return ADB_ERR_PARAM;
+
+    ADB__INFO("saving key to \"%s\"", path);
+
+    res = adb__key_write_pkcs8_pem(key, 
+            buffer, sizeof(buffer),
+            &written);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    res = adb__util_write_file(path, buffer, written - 1);
+    if(res != ADB_ERR_OK)
+        return res;
+    
+    ADB__INFO("saved key to \"%s\" successfully", path);
+    return ADB_ERR_OK;
+}
+
 
 static bool adb__encode_android_pubkey(  
         const mbedtls_rsa_context *rsa,  
@@ -350,120 +500,6 @@ void adb_key_destroy(
     adb__free(key->pubkey);
     adb__free(key);
 }
-
-// bool adb__key_write_pkcs8_pem(
-//         adb_key_t *key,
-//         uint8_t *out,
-//         const size_t out_size)
-// {
-//     uint8_t der[ADB__RSA2048_DER_MAX] = {0};
-//     uint8_t *end = NULL;
-//     size_t pkcs1_len = 0;
-//     int err = 0;
-//     uint8_t *p = NULL;
-//     uint8_t *alg_end = NULL;
-//     size_t alg_id_len = 0;
-//     size_t content_len = 0;
-//     size_t der_len = 0;
-//     size_t pem_len = 0;
-// 
-//     end = der + sizeof(der);
-//     err = mbedtls_pk_write_key_der(&key->pk, der, sizeof(der));
-//     if (err < 0) 
-//         return err;
-// 
-//     pkcs1_len = (size_t)err;
-//     p = end - pkcs1_len;
-// 
-//     /* privateKey OCTET STRING */
-//     if(
-//             (err = mbedtls_asn1_write_len(
-//                     &p, 
-//                     der, 
-//                     pkcs1_len)) < 0 ||
-//             (err = mbedtls_asn1_write_tag(
-//                     &p,
-//              der,
-//                 MBEDTLS_ASN1_OCTET_STRING)) < 0)
-//         goto fail;
-// 
-//     /* Everything after this point belongs to AlgorithmIdentifier,
-//      * not to privateKey. */
-//     alg_end = p;
-// 
-//     /* 
-//      * AlgorithmIdentifier:
-//      *     SEQUENCE {
-//      *         algorithm  OBJECT IDENTIFIER rsaEncryption,
-//      *         parameters NULL
-//      *     }
-//      */
-//     if(
-//             (err = mbedtls_asn1_write_null(
-//                     &p, 
-//                     der)) < 0 ||
-//             (err = mbedtls_asn1_write_oid(
-//                     &p,
-//                     der,
-//                     MBEDTLS_OID_PKCS1_RSA,
-//                     sizeof(MBEDTLS_OID_PKCS1_RSA) - 1)) < 0)
-//         goto fail;
-// 
-//     alg_id_len = (size_t)(alg_end - p);
-//     if(
-//             (err = mbedtls_asn1_write_len(
-//                     &p, 
-//                     der, 
-//                     alg_id_len)) < 0 ||
-//             (err = mbedtls_asn1_write_tag(
-//                  &p,
-//              der,
-//                MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) < 0)
-//         goto fail;
-// 
-//     /* version INTEGER 0 */
-//     err = mbedtls_asn1_write_int(&p, der, 0);
-//     if (err < 0) 
-//         return err;
-// 
-//     /*
-//      * PrivateKeyInfo:
-//      *     SEQUENCE {
-//      *         version
-//      *         privateKeyAlgorithm
-//      *         privateKey
-//      *     }
-//      */
-//     content_len = (size_t)(end - p);
-//     if(
-//             (err = mbedtls_asn1_write_len(
-//                     &p, 
-//                     der, 
-//                     content_len)) < 0 ||
-//             (err = mbedtls_asn1_write_tag(
-//                  &p,
-//                  der,
-//                  MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) < 0)
-//         goto fail;
-// 
-//     der_len = (size_t)(end - p);
-//     err = mbedtls_pem_write_buffer(
-//         "-----BEGIN PRIVATE KEY-----\n",
-//         "-----END PRIVATE KEY-----\n",
-//         p,
-//         der_len,
-//         out,
-//         out_size,
-//         &pem_len);
-//     if (err != 0) 
-//         return err;
-// 
-//     return true;
-// 
-// fail:
-//     adb__log_err_mbedtls(err, "failed to write pkcs#8 pem from key");
-//     return false;
-// }
 
 static int adb__key_x509write_cert(
         adb_key_t *key,

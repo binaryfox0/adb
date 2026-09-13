@@ -160,7 +160,7 @@ static adb_error_t adb__pair_read_packet(
     }
 
     ADB__INFO("read pairing packet sucessfully");
-    ADB__DEBUG("version: 0x%02X, type: 0x%02X (%s), size: %u bytes",
+    ADB__DEBUG("ppkt: version: 0x%02X, type: 0x%02X (%s), size: %u bytes",
             pkt->version, pkt->type, adb__pair_packet_type_strings[pkt->type],
             pkt->size);
     return ADB_ERR_OK;
@@ -183,7 +183,7 @@ static adb_error_t adb__pair_write_packet(
         return ADB_ERR_PARAM;
 
     ADB__INFO("writing pairing packet");
-    ADB__DEBUG("version: 0x%02X, type: 0x%02X (%s), size: %u bytes",
+    ADB__DEBUG("ppkt: version: 0x%02X, type: 0x%02X (%s), size: %u bytes",
             pkt->version, pkt->type, adb__pair_packet_type_strings[pkt->type],
             pkt->size);
 

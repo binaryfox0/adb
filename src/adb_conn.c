@@ -66,6 +66,7 @@ adb_error_t adb_conn_create_wired(
     return ADB_ERR_OK;
 }
 
+
 adb_error_t adb_conn_create_wireless(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
@@ -74,6 +75,7 @@ adb_error_t adb_conn_create_wireless(
 {
     adb_conn_t *tmp = NULL;
     adb_error_t err = ADB_ERR_OK;
+    struct sockaddr addr = {0};
 
     if(!conn || !ctx || !host || port == 0)
         return ADB_ERR_PARAM;
@@ -85,10 +87,14 @@ adb_error_t adb_conn_create_wireless(
     tmp->ctx = ctx;
     tmp->profile = ADB_CONN_PROFILE_WIRELESS;
 
-    err = adb__tcp_transport_create(
-            &tmp->transport,
-            host, port);
+    if(!adb__tcp_sockaddr_from_host_port(&addr, host, port))
+    {
+        err = ADB_ERR_PARAM;
+        goto fail;
+    }
 
+    err = adb__tcp_transport_create(
+            &tmp->transport, &addr);
     if(err != ADB_ERR_OK)
         goto fail;
 
@@ -100,7 +106,6 @@ adb_error_t adb_conn_create_wireless(
     return ADB_ERR_OK;
 
 fail:
-
     adb__tls_destroy(&tmp->tls);
     adb__transport_destroy(&tmp->transport);
     adb__free(tmp);
