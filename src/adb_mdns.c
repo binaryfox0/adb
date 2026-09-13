@@ -1,5 +1,6 @@
 #include "adb_mdns.h"
 
+#include <arpa/inet.h>
 #include <mdns.h>
 #include "adb_log_priv.h"
 
@@ -25,7 +26,7 @@ static int adb__mdns_record_callback(
         size_t record_length, 
         void* user_data)
 {
-    mdns_record_srv_t srv = {0};
+    adb__mdns_info_t *out = user_data;
     char name[ADB__MDNS_NAME_MAX] = {0};
  
     (void)sock; 
@@ -40,19 +41,60 @@ static int adb__mdns_record_callback(
     (void)size;
     (void)name_offset; 
     (void)name_length; 
-    (void)record_offset;
-    (void)record_length; 
-    (void)user_data;
 
-    if(rtype != MDNS_RECORDTYPE_SRV)
-        return 0;
-    
-    srv = mdns_record_parse_srv(
-            data, size, 
-            record_offset, record_length, 
+    size_t offset = name_offset;
+    mdns_string_extract(data, size, &offset, 
             name, sizeof(name));
-    ADB__INFO("%s", name);
-    (void)srv;
+    ADB__INFO("record: name=\"%.*s\" type=%u",
+              (int)name_length, name, rtype);
+
+    if (rtype == MDNS_RECORDTYPE_SRV)
+    {
+        mdns_record_srv_t srv = {0};
+
+        srv = mdns_record_parse_srv(
+                data, size,
+                record_offset, record_length,
+                name, sizeof(name));
+
+        ADB__INFO("srv: target=\"%.*s\" port=%u priority=%u weight=%u",
+                  (int)srv.name.length, srv.name.str,
+                  srv.port,
+                  srv.priority,
+                  srv.weight);
+    }
+    else if (rtype == MDNS_RECORDTYPE_A)
+    {
+        struct sockaddr_in sin = {0};
+        char address[INET_ADDRSTRLEN] = {0};
+
+        mdns_record_parse_a(
+                data, size,
+                record_offset, record_length,
+                &sin);
+
+        inet_ntop(AF_INET, &sin.sin_addr, 
+                address, sizeof(address));
+
+        ADB__INFO("a: address=\"%s\"", address);
+    }
+    else if (rtype == MDNS_RECORDTYPE_AAAA)
+    {
+        struct sockaddr_in6 sin6 = {0};
+        char address[INET6_ADDRSTRLEN] = {0};
+
+        mdns_record_parse_aaaa(
+                data, size,
+                record_offset, record_length,
+                &sin6);
+
+        inet_ntop(AF_INET6, &sin6.sin6_addr, 
+                address, sizeof(address));
+
+        ADB__INFO("aaaa: address=\"%s\"", address);
+    }
+
+    (void)out;
     return 0;
 }
 

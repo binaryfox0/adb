@@ -254,8 +254,6 @@ adb_error_t adb_pair(
     adb_error_t ret = ADB_ERR_OK;
     adb_conn_t *conn = NULL;
     adb__tls_t *tls = NULL;
-    uint8_t private_key[4096] = {0};
-    uint8_t x509_cert[4096] = {0};
 
     spake2_ctx_t *spake2 = NULL;
     int err = 0;
@@ -288,15 +286,15 @@ adb_error_t adb_pair(
     if(ret != ADB_ERR_OK)
         return ret;
 
-    if(
-            !adb__key_write_x509_pem(key, ctx, 
-                x509_cert, sizeof(x509_cert)) ||
-            !adb__key_write_pkcs8_pem(key, 
-                private_key, sizeof(private_key)))
-    {
-        ADB__ERROR("failed to create X509/PKCS#8 PEM");
-        return ADB_ERR_CRYPTO;
-    }
+    // if(
+    //         !adb__key_write_x509_pem(key, ctx, 
+    //             x509_cert, sizeof(x509_cert)) ||
+    //         !adb__key_write_pkcs8_pem(key, 
+    //             private_key, sizeof(private_key)))
+    // {
+    //     ADB__ERROR("failed to create X509/PKCS#8 PEM");
+    //     return ADB_ERR_CRYPTO;
+    // }
     
     memcpy(password, code, ADB__PAIR_CODE_DIGITS);
     ret = adb__tls_export_keying_material(tls,
