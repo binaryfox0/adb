@@ -2,81 +2,52 @@
 
 #include <openssl/curve25519.h>
 
-int bssl_spake2(
-        int alice,
-        const uint8_t *password,
-        size_t password_len,
-        uint8_t *msg,
-        size_t *msg_len,
-        uint8_t *key,
-        size_t *key_len,
-        const uint8_t *peer_msg,
-        size_t peer_msg_len)
+bssl_spake2_t *bssl_spake2_new(
+        const int is_alice,
+        const uint8_t *my_name,
+        const size_t my_name_len,
+        const uint8_t *their_name,
+        const size_t their_name_len)
 {
-    SPAKE2_CTX *ctx = NULL;
-    const uint8_t *my_name = NULL;
-    const uint8_t *their_name = NULL;
-    size_t my_name_len = 0;
-    size_t their_name_len = 0;
-    int role = 0;
-    int result = 0;
-
-    static const uint8_t client_name[] = "adb pair client";
-    static const uint8_t server_name[] = "adb pair server";
-
-    if (alice != 0) {
-        role = spake2_role_alice;
-        my_name = client_name;
-        my_name_len = sizeof(client_name);
-
-        their_name = server_name;
-        their_name_len = sizeof(server_name);
-    } else {
-        role = spake2_role_bob;
-        my_name = server_name;
-        my_name_len = sizeof(server_name);
-
-        their_name = client_name;
-        their_name_len = sizeof(client_name);
-    }
-
-    ctx = SPAKE2_CTX_new(
-            role,
-            my_name,
-            my_name_len,
-            their_name,
-            their_name_len);
-
-    if (!ctx)
-        return 0;
-
-    if (!SPAKE2_generate_msg(
-                ctx,
-                msg,
-                msg_len,
-                SPAKE2_MAX_MSG_SIZE,
-                password,
-                password_len)) {
-        SPAKE2_CTX_free(ctx);
-        return 0;
-    }
-
-    if (peer_msg) {
-        if (!SPAKE2_process_msg(
-                    ctx,
-                    key,
-                    key_len,
-                    SPAKE2_MAX_KEY_SIZE,
-                    peer_msg,
-                    peer_msg_len)) {
-            SPAKE2_CTX_free(ctx);
-            return 0;
-        }
-    }
-
-    result = 1;
-
-    SPAKE2_CTX_free(ctx);
-
-    return result;
+    return SPAKE2_CTX_new(
+            is_alice ? spake2_role_alice : spake2_role_bob, 
+            my_name, my_name_len, 
+            their_name, their_name_len);
 }
+
+int bssl_spake2_generate_msg(
+        bssl_spake2_t *ctx,
+        const int is_alice,
+        uint8_t *out, 
+        size_t *out_len,
+        const size_t max_out_len, 
+        const uint8_t *password,
+        const size_t password_len)
+{
+    (void)is_alice;
+    return SPAKE2_generate_msg(
+            ctx,
+            out, out_len, max_out_len,
+            password, password_len);
+}
+
+int bssl_spake2_process_msg(
+        bssl_spake2_t *ctx, 
+        uint8_t *out_key, 
+        size_t *out_key_len,
+        const size_t max_out_key_len, 
+        const uint8_t *their_msg,
+        const size_t their_msg_len)
+{
+    return SPAKE2_process_msg(
+            ctx,
+            out_key, out_key_len, max_out_key_len,
+            their_msg, their_msg_len);
+}
+
+void bssl_spake2_free(
+        bssl_spake2_t *ctx)
+{
+    SPAKE2_CTX_free(ctx);
+}
+

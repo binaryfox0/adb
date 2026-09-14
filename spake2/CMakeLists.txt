@@ -26,11 +26,6 @@ if(SPAKE2_BUILD_TESTS)
         URL
             "https://boringssl.googlesource.com/boringssl/+archive/825a42ab64264250e13bc4b94155d10ed9d92298.tar.gz"
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-        PATCH_COMMAND
-            ${CMAKE_COMMAND}
-            -DBORINGSSL_SOURCE_DIR=<SOURCE_DIR>
-            -P
-            ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_bssl.cmake
     )
 
     FetchContent_MakeAvailable(boringssl)
@@ -43,5 +38,5 @@ if(SPAKE2_BUILD_TESTS)
         tests/bssl_spake2.c
         tests/my_spake2.c
         tests/main.c)
-    target_link_libraries(test PRIVATE spake2 crypto)
+    target_link_libraries(test PRIVATE aparse spake2 crypto)
 endif()

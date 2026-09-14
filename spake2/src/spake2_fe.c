@@ -508,7 +508,7 @@ void spake2__fe_from_bytes(
         spake2__fe_t *out1, 
         const uint8_t arg1[32]) 
 {
-    uint64_t x1 = ((uint64_t)(arg1[31]) << 44);
+    uint64_t x1 = ((uint64_t)(arg1[31] & 0x7f) << 44);
     uint64_t x2 = ((uint64_t)(arg1[30]) << 36);
     uint64_t x3 = ((uint64_t)(arg1[29]) << 28);
     uint64_t x4 = ((uint64_t)(arg1[28]) << 20);
