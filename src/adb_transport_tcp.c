@@ -7,10 +7,14 @@
 #include <errno.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 
 #include "adb_alloc_priv.h"
 #include "adb_error_priv.h"
 #include "adb_log_priv.h"
+
+#define ADB__TCP_KEEPALIVE_INTERVAL 1
+#define ADB__TCP_KEEPCNT 10
 
 static adb_error_t adb__tcp_read(
         void *userdata,
@@ -159,6 +163,35 @@ static const char *adb__addr_to_string(
     return buffer;
 }
 
+static bool adb__tcp_set_sockopts(
+        const int sock)
+{
+    if(setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, 
+            (int[1]){1}, sizeof(int)) < 0)
+        goto fail;
+
+    if(setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE,
+                (int[1]){ADB__TCP_KEEPALIVE_INTERVAL}, 
+                sizeof(int)) < 0)
+        goto fail;
+    
+    if(setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL,
+                (int[1]){ADB__TCP_KEEPALIVE_INTERVAL}, 
+                sizeof(int)) < 0)
+        goto fail;
+    
+    if(setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT,
+                (int[1]){ADB__TCP_KEEPCNT}, 
+                sizeof(int)) < 0)
+        goto fail;
+
+    return true;
+
+fail:
+    adb__log_err_errno("failed to set options for tcp socket");
+    return false;
+}
+
 adb_error_t adb__tcp_transport_create(
         adb__transport_t *transport,
         const struct sockaddr *addr)
@@ -192,6 +225,12 @@ adb_error_t adb__tcp_transport_create(
         ADB__ERROR("failed to create socket for %s", adb__addr_to_string(addr));
         ADB__INFO("reason: %s", strerror(errno));
         ret = adb__error_from_errno(errno);
+        goto fail;
+    }
+
+    if(!adb__tcp_set_sockopts(sock))
+    {
+        ret = ADB_ERR_NETWORK;
         goto fail;
     }
 
