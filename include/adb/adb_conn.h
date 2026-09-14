@@ -49,7 +49,8 @@ adb_error_t adb_conn_create_custom(
 
 
 adb_error_t adb_conn_handshake(
-        adb_conn_t *conn);
+        adb_conn_t *conn,
+        adb_key_t *key);
 
 void adb_conn_destroy(
         adb_conn_t *conn);

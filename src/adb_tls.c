@@ -25,13 +25,13 @@ static int adb__tls_bio_send(
     err = tls->transport->write(
             tls->transport->userdata,
             buf, size);
-    if(err == ADB_ERR_WOULDBLOCK)
-        return MBEDTLS_ERR_SSL_WANT_WRITE;
-
+    tls->bio_error = err;
     if(err != ADB_ERR_OK)
     {
-        tls->bio_error = err;
-        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+        if(err == ADB_ERR_DISCONNECTED)
+            return MBEDTLS_ERR_SSL_CONN_EOF;
+        else
+            return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
     }
 
     return (int)size;
@@ -55,12 +55,13 @@ static int adb__tls_bio_recv(
             buf,
             size);
 
-    if(err == ADB_ERR_WOULDBLOCK)
-        return MBEDTLS_ERR_SSL_WANT_READ;
+    tls->bio_error = err;
     if(err != ADB_ERR_OK)
     {
-        tls->bio_error = err;
-        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+        if(err == ADB_ERR_DISCONNECTED)
+            return MBEDTLS_ERR_SSL_CONN_EOF;
+        else
+            return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
     }
 
     return (int)size;

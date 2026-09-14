@@ -3,12 +3,22 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+
 #include <adb/adb_error.h>
 #include <adb/adb_conn.h>
+#include "adb_sock.h"
 
 typedef struct adb_ctx adb_ctx_t;
 typedef struct adb_conn adb_conn_t;
 typedef struct adb__tls adb__tls_t;
+
+adb_error_t adb__conn_from_sockaddr(
+        adb_conn_t **conn,
+        adb_ctx_t *ctx,
+        const struct sockaddr *addr);
+
+adb_error_t adb__conn_upgrade_tls(
+        adb_conn_t *conn);
 
 adb__tls_t *adb__conn_get_tls(
         adb_conn_t *conn);

@@ -4,13 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#ifdef _WIN32
-#   include <winsock2.h>
-#else
-#   include <sys/socket.h>
-#endif
-
 #include <adb/adb_error.h>
+#include "adb_sock.h"
 
 typedef struct adb_wired_info adb_wired_info_t;
 typedef struct adb__transport adb__transport_t;

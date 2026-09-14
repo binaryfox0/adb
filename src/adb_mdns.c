@@ -102,14 +102,16 @@ static int adb__mdns_record_callback(
                 data, size,
                 record_offset, record_length,
                 &sin);
+            
+        inet_ntop(AF_INET, &sin.sin_addr, 
+                address, sizeof(address));
 
         if(result->have_srv && 
                 record_name.length == strlen(result->hostname) &&
                 !memcmp(record_name.str, result->hostname, 
                     record_name.length))
         {
-            inet_ntop(AF_INET, &sin.sin_addr, 
-                    address, sizeof(address));
+            sin.sin_port = ntohs(result->port);
             result->sin = sin;
             result->have_ipv4 = true;
         }
@@ -125,13 +127,15 @@ static int adb__mdns_record_callback(
                 record_offset, record_length,
                 &sin6);
 
+        inet_ntop(AF_INET6, &sin6.sin6_addr, 
+                address, sizeof(address));
+
         if(result->have_srv && 
                 record_name.length == strlen(result->hostname) &&
                 !memcmp(record_name.str, result->hostname, 
                     record_name.length))
         {
-            inet_ntop(AF_INET6, &sin6.sin6_addr, 
-                    address, sizeof(address));
+            sin6.sin6_port = ntohs(result->port);
             result->sin6 = sin6;
             result->have_ipv6 = true;
         }

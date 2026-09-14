@@ -20,12 +20,12 @@
 
 #define ADB__ENUM_KEY_VALUE(val) [(val)] = #val 
 
-#define ADB__PAIR_CODE_DIGITS 6
-#define ADB__PAIR_HEADER_VER     1
-#define ADB__PAIR_HEADER_MIN_VER 1
-#define ADB__PAIR_HEADER_MAX_VER 1
+#define ADB__PAIR_CODE_DIGITS       6
+#define ADB__PAIR_HEADER_VER        1
+#define ADB__PAIR_HEADER_MIN_VER    1
+#define ADB__PAIR_HEADER_MAX_VER    1
 #define ADB__MAX_PEER_INFO_SIZE     8192
-#define ADB__MAX_PAIR_PAYLOAD_SIZE       (ADB__MAX_PEER_INFO_SIZE * 2)
+#define ADB__MAX_PAIR_PAYLOAD_SIZE  (ADB__MAX_PEER_INFO_SIZE * 2)
 
 typedef enum 
 {
@@ -39,7 +39,7 @@ typedef struct __attribute__((packed))
     uint8_t version;   // PairingPacket version
     uint8_t type;      // the type of packet (PairingPacket.Type)
     uint32_t size;     // Size of the payload in bytes
-    void *payload;
+    const void *payload;
 } adb__pair_packet_t;
 
 typedef enum 
@@ -485,6 +485,7 @@ adb_error_t adb_pair(
     uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
     size_t key_material_len = 0;
     char device_guid[ADB__MEMSZ(adb__peer_info_t, data)] = {0};
+    struct sockaddr addr = {0};
 
     if(!ctx || !adb__verify_pairing_code(code, code_len))
         return ADB_ERR_PARAM;
@@ -493,7 +494,11 @@ adb_error_t adb_pair(
     ret = adb_conn_create_wireless(&conn, ctx, host, port);
     if(ret != ADB_ERR_OK)
         return ret;
-    
+   
+    ret = adb__conn_upgrade_tls(conn);
+    if(ret != ADB_ERR_OK)
+        goto cleanup;
+
     ret = adb__tls_handshake(adb__conn_get_tls(conn), ctx, key);
     if(ret != ADB_ERR_OK)
         goto cleanup;
@@ -514,7 +519,15 @@ adb_error_t adb_pair(
     if(ret != ADB_ERR_OK)
         goto cleanup;
 
-    adb__mdns_find_service(device_guid, NULL); 
+    adb__mdns_find_service(device_guid, &addr);
+    if(addr.sa_family != AF_UNSPEC)
+    {
+        adb_conn_t *conn2 = NULL;
+        adb__conn_from_sockaddr(&conn2, ctx, &addr);
+        adb_conn_handshake(conn2, key);
+        adb_conn_destroy(conn2);
+
+    }
     ADB__INFO("pairing wireless device successfully");
 
 cleanup:

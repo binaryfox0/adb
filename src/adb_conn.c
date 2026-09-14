@@ -66,18 +66,15 @@ adb_error_t adb_conn_create_wired(
     return ADB_ERR_OK;
 }
 
-
-adb_error_t adb_conn_create_wireless(
+adb_error_t adb__conn_from_sockaddr(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
-        const char *host,
-        uint16_t port)
+        const struct sockaddr *addr)
 {
     adb_conn_t *tmp = NULL;
     adb_error_t err = ADB_ERR_OK;
-    struct sockaddr addr = {0};
 
-    if(!conn || !ctx || !host || port == 0)
+    if(!conn || !ctx || !addr)
         return ADB_ERR_PARAM;
 
     tmp = adb__calloc(1, sizeof(*tmp));
@@ -87,20 +84,10 @@ adb_error_t adb_conn_create_wireless(
     tmp->ctx = ctx;
     tmp->profile = ADB_CONN_PROFILE_WIRELESS;
 
-    if(!adb__tcp_sockaddr_from_host_port(&addr, host, port))
-    {
-        err = ADB_ERR_PARAM;
-        goto fail;
-    }
-
     err = adb__tcp_transport_create(
-            &tmp->transport, &addr);
+            &tmp->transport, addr);
     if(err != ADB_ERR_OK)
         goto fail;
-
-    adb__tls_init(
-            &tmp->tls,
-            &tmp->transport);
 
     *conn = tmp;
     return ADB_ERR_OK;
@@ -111,6 +98,22 @@ fail:
     adb__free(tmp);
 
     return err;
+}
+
+
+adb_error_t adb_conn_create_wireless(
+        adb_conn_t **conn,
+        adb_ctx_t *ctx,
+        const char *host,
+        uint16_t port)
+{
+    struct sockaddr addr = {0};
+    if(!conn || !ctx || !host || port == 0)
+        return ADB_ERR_PARAM;
+
+    if(!adb__tcp_sockaddr_from_host_port(&addr, host, port))
+        return ADB_ERR_PARAM;
+    return adb__conn_from_sockaddr(conn, ctx, &addr);
 }
 
 adb_error_t adb_conn_create_custom(
@@ -169,56 +172,50 @@ adb_error_t adb_conn_create_custom(
     return ADB_ERR_OK;
 }
 
+adb_error_t adb__conn_upgrade_tls(
+        adb_conn_t *conn)
+{
+    if(!conn)
+        return ADB_ERR_PARAM;
+
+    if(!adb__tls_init(
+            &conn->tls,
+            &conn->transport))
+        return ADB_ERR_GENERIC; // impossible, only dev err
+    return ADB_ERR_OK;
+}
 
 #define ADB__MAX_SUPPORTED_VER 0x01000001
 #define ADB__MAX_ADB_PAYLOAD_SIZE (1024 * 1024)
 
-static adb_error_t adb__send_packet(
-        adb_conn_t *conn,
-        adb__packet_t *pkt)
-{
-    const uint8_t *payload_data = NULL;
-    uint32_t sum = 0;
-    adb_error_t res = ADB_ERR_OK;
-    if(!conn || !pkt)
-        return ADB_ERR_PARAM;
-
-    payload_data = pkt->payload;
-    for(uint32_t i = 0; i < pkt->msg.data_length; i++)
-        sum += payload_data[i];
-
-    pkt->msg.data_check = sum;
-    pkt->msg.magic = pkt->msg.command ^ 0xffffffff;
-
-    res = adb__conn_write(conn, &pkt->msg, sizeof(pkt->msg));
-    if(res != ADB_ERR_OK)
-        return res;
-
-    if(pkt->msg.data_length == 0)
-        return ADB_ERR_OK;
-
-    res = adb__conn_write(conn, pkt->payload, pkt->msg.data_length);
-    if(res != ADB_ERR_OK)
-        return res;
-
-    return ADB_ERR_OK;
-}
-
 adb_error_t adb_conn_handshake(
-        adb_conn_t *conn)
+        adb_conn_t *conn,
+        adb_key_t *key)
 {
-    const char conn_str[] = 
+    static const char conn_str[] = 
         "host::";
+
     adb__packet_t pkt = {0};
-    if(!conn)
+    if(!conn || !key)
         return ADB_ERR_PARAM;
 
-    pkt.msg.command = ADB__CMD_CNXN;
-    pkt.msg.arg0 = ADB__MAX_SUPPORTED_VER;
-    pkt.msg.arg1 = ADB__MAX_ADB_PAYLOAD_SIZE;
-    pkt.msg.data_length = sizeof(conn_str) - 1;
+    if(conn->tls.initialized)
+    {
+        adb_error_t res = adb__tls_handshake(
+                &conn->tls,
+                conn->ctx,
+                key);
+        if(res != ADB_ERR_OK)
+            return res;
+    }
 
-    return adb__send_packet(conn, &pkt);
+    pkt.command = ADB__CMD_CNXN;
+    pkt.arg0 = ADB__MAX_SUPPORTED_VER;
+    pkt.arg1 = ADB__MAX_ADB_PAYLOAD_SIZE;
+    pkt.payload_size = sizeof(conn_str) - 1;
+    pkt.payload = conn_str;
+
+    return adb__packet_send(conn, &pkt);
 }
 
 void adb_conn_destroy(

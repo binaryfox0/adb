@@ -198,7 +198,7 @@ adb_error_t adb__tcp_transport_create(
 {
     adb_error_t ret = ADB_ERR_OK;
     socklen_t addrlen = 0;
-    int sock = 0;
+    int sock = -1;
     int err = 0;
 
     if(!transport || !addr)

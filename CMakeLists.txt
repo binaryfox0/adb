@@ -91,6 +91,7 @@ add_library(adb
     src/adb_key.c
     src/adb_aes.c
     src/adb_mdns.c
+    src/adb_packet.c
     src/adb_pair.c
     src/adb_conn.c)
 target_include_directories(adb PUBLIC include/)
