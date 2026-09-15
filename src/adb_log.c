@@ -105,7 +105,7 @@ void adb__log_err_adb(
 
 #define ADB__BYTES_PER_LINE 16
 
-void adb__log_print_payload(
+void adb__log_payload(
         const void *data,
         const size_t size,
         const char *fmt,

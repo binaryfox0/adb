@@ -67,37 +67,23 @@ static int adb__tls_bio_recv(
     return (int)size;
 }
 
-
-bool adb__tls_init(
-        adb__tls_t *tls,
-        adb__transport_t *transport)
-{
-    if(!tls || !transport ||
-            !transport->read || !transport->write)
-        return false;
-
-    memset(tls, 0, sizeof(*tls));
-
-    mbedtls_ssl_init(&tls->ssl);
-    mbedtls_ssl_config_init(&tls->conf);
-    mbedtls_x509_crt_init(&tls->crt);
-
-    tls->transport = transport;
-    tls->bio_error = ADB_ERR_OK;
-    tls->initialized = true;
-
-    return true;
-}
-
-static adb_error_t adb__tls_setup(
+adb_error_t adb__tls_init(
         adb__tls_t *tls,
         adb_ctx_t *ctx,
-        adb_key_t *key)
+        adb_key_t *key,
+        adb__transport_t *transport)
 {
     int err = 0;
 
-    if(!tls || !tls->initialized || !key)
+    if(!tls || !ctx || !key ||
+            !transport || !transport->read || !transport->write)
         return ADB_ERR_PARAM;
+    
+    memset(tls, 0, sizeof(*tls));
+    
+    mbedtls_ssl_init(&tls->ssl);
+    mbedtls_ssl_config_init(&tls->conf);
+    mbedtls_x509_crt_init(&tls->crt);
 
     err = mbedtls_ssl_config_defaults(
             &tls->conf,
@@ -108,7 +94,7 @@ static adb_error_t adb__tls_setup(
     if(err != 0)
     {
         adb__log_err_mbedtls(err, "failed to configure TLS");
-        return ADB_ERR_CRYPTO;
+        goto fail;
     }
 
     mbedtls_ssl_conf_rng(
@@ -137,7 +123,7 @@ static adb_error_t adb__tls_setup(
     if(err != 0)
     {
         adb__log_err_mbedtls(err, "failed to set X.509 certificate");
-        return ADB_ERR_CRYPTO;
+        goto fail;
     }
             
     err = mbedtls_ssl_setup(
@@ -146,7 +132,7 @@ static adb_error_t adb__tls_setup(
     if(err != 0)
     {
         adb__log_err_mbedtls(err, "failed to setup TLS");
-        return ADB_ERR_CRYPTO;
+        goto fail;
     }
 
     mbedtls_ssl_set_bio(
@@ -156,23 +142,27 @@ static adb_error_t adb__tls_setup(
             adb__tls_bio_recv,
             NULL);
 
+    tls->transport = transport;
+    tls->bio_error = ADB_ERR_OK;
+    tls->initialized = true;
     return ADB_ERR_OK;
+
+fail:
+    mbedtls_ssl_free(&tls->ssl);
+    mbedtls_ssl_config_free(&tls->conf);
+    mbedtls_x509_crt_free(&tls->crt);
+    memset(tls, 0, sizeof(*tls));
+
+    return ADB_ERR_CRYPTO;
 }
 
 adb_error_t adb__tls_handshake(
-        adb__tls_t *tls,
-        adb_ctx_t *ctx,
-        adb_key_t *key)
+        adb__tls_t *tls)
 {
-    adb_error_t res = ADB_ERR_OK;
     int err = 0;
     if(!tls || !tls->initialized)
         return ADB_ERR_PARAM;
 
-    res = adb__tls_setup(tls, ctx, key);
-    if(res != ADB_ERR_OK)
-        return res;
-    
     err = mbedtls_ssl_handshake(&tls->ssl);
     if(err != 0)
     {

@@ -152,41 +152,37 @@ adb_error_t adb_conn_create_custom(
         return err;
     }
 
-    if(profile == ADB_CONN_PROFILE_WIRELESS)
-    {
-        err = adb__tls_init(
-                &tmp->tls,
-                &tmp->transport);
-
-        if(err != ADB_ERR_OK)
-        {
-            adb__transport_destroy(
-                    &tmp->transport);
-
-            adb__free(tmp);
-            return err;
-        }
-    }
-
     *conn = tmp;
     return ADB_ERR_OK;
 }
 
 adb_error_t adb__conn_upgrade_tls(
-        adb_conn_t *conn)
+        adb_conn_t *conn,
+        adb_key_t *key)
 {
+    adb_error_t res = ADB_ERR_OK;
     if(!conn)
         return ADB_ERR_PARAM;
 
-    if(!adb__tls_init(
+    res = adb__tls_init(
             &conn->tls,
-            &conn->transport))
-        return ADB_ERR_GENERIC; // impossible, only dev err
+            conn->ctx,
+            key,
+            &conn->transport);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    res = adb__tls_handshake(&conn->tls);
+    if(res != ADB_ERR_OK)
+    {
+        adb__tls_destroy(&conn->tls);
+        return res;
+    }
+    
     return ADB_ERR_OK;
 }
 
 #define ADB__MAX_SUPPORTED_VER 0x01000001
-#define ADB__MAX_ADB_PAYLOAD_SIZE (1024 * 1024)
 
 adb_error_t adb_conn_handshake(
         adb_conn_t *conn,
@@ -195,27 +191,27 @@ adb_error_t adb_conn_handshake(
     static const char conn_str[] = 
         "host::";
 
+    adb_error_t res = ADB_ERR_OK;
     adb__packet_t pkt = {0};
+    uint8_t *banner = NULL;
+
     if(!conn || !key)
         return ADB_ERR_PARAM;
 
-    if(conn->tls.initialized)
-    {
-        adb_error_t res = adb__tls_handshake(
-                &conn->tls,
-                conn->ctx,
-                key);
-        if(res != ADB_ERR_OK)
-            return res;
-    }
-
     pkt.command = ADB__CMD_CNXN;
     pkt.arg0 = ADB__MAX_SUPPORTED_VER;
-    pkt.arg1 = ADB__MAX_ADB_PAYLOAD_SIZE;
+    pkt.arg1 = ADB__PACKET_MAX_PAYLOAD_SIZE;
     pkt.payload_size = sizeof(conn_str) - 1;
-    pkt.payload = conn_str;
 
-    return adb__packet_send(conn, &pkt);
+    res = adb__packet_write(conn, &pkt, conn_str);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    res = adb__packet_read(conn, &pkt, (void**)&banner);
+    if(res != ADB_ERR_OK)
+        return res;
+    adb__free(banner);
+    return ADB_ERR_OK;
 }
 
 void adb_conn_destroy(
@@ -260,7 +256,7 @@ adb_error_t adb__conn_read(
     }
     
     if(res == ADB_ERR_OK)
-        adb__log_print_payload(buf, size, "read data");
+        adb__log_payload(buf, size, "read data");
     return res;
 }
 
@@ -273,7 +269,7 @@ adb_error_t adb__conn_write(
     if(!conn)
         return ADB_ERR_PARAM;
 
-    adb__log_print_payload(buf, size, "write data");
+    adb__log_payload(buf, size, "write data");
     if(conn->tls.initialized)
     {
         return adb__tls_write(

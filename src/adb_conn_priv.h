@@ -18,6 +18,10 @@ adb_error_t adb__conn_from_sockaddr(
         const struct sockaddr *addr);
 
 adb_error_t adb__conn_upgrade_tls(
+        adb_conn_t *conn,
+        adb_key_t *key);
+
+uint32_t adb_conn_get_max_payload(
         adb_conn_t *conn);
 
 adb__tls_t *adb__conn_get_tls(

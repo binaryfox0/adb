@@ -39,10 +39,10 @@ static adb_error_t adb__tcp_read(
         if(ret < 0)
         {
             if(errno == EAGAIN)
-                continue;
+                return ADB_ERR_TIMEOUT;
 #if EWOULDBLOCK != EAGAIN
             if(errno == EWOULDBLOCK)
-                continue;
+                return ADB_ERR_TIMEOUT;
 #endif
             return adb__error_from_errno(errno);
         }
@@ -80,10 +80,10 @@ static adb_error_t adb__tcp_write(
         if(ret < 0)
         {
             if(errno == EAGAIN)
-                continue;
+                return ADB_ERR_TIMEOUT;
 #if EWOULDBLOCK != EAGAIN
             if(errno == EWOULDBLOCK)
-                continue;
+                return ADB_ERR_TIMEOUT;
 #endif
             return adb__error_from_errno(errno);
         }

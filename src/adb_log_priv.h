@@ -40,7 +40,7 @@ ADB__PRINTF(2, 3) void adb__log_err_adb(
         ADB__PRINTF_FMT const char *fmt,
         ...);
 
-ADB__PRINTF(3, 4) void adb__log_print_payload(
+ADB__PRINTF(3, 4) void adb__log_payload(
         const void *data,
         const size_t size,
         ADB__PRINTF_FMT const char *fmt,

@@ -28,14 +28,14 @@ typedef struct adb__tls
     bool initialized;
 } adb__tls_t;
 
-bool adb__tls_init(
+adb_error_t adb__tls_init(
         adb__tls_t *tls,
+        adb_ctx_t *ctx,
+        adb_key_t *key,
         adb__transport_t *transport);
 
 adb_error_t adb__tls_handshake(
-        adb__tls_t *tls,
-        adb_ctx_t *ctx,
-        adb_key_t *key);
+        adb__tls_t *tls);
 
 adb_error_t adb__tls_export_keying_material(
         adb__tls_t *tls,

@@ -25,7 +25,7 @@
 #define ADB__PAIR_HEADER_MIN_VER    1
 #define ADB__PAIR_HEADER_MAX_VER    1
 #define ADB__MAX_PEER_INFO_SIZE     8192
-#define ADB__MAX_PAIR_PAYLOAD_SIZE  (ADB__MAX_PEER_INFO_SIZE * 2)
+#define ADB__PAIR_MAX_PAYLOAD_SIZE  (ADB__MAX_PEER_INFO_SIZE * 2)
 
 typedef enum 
 {
@@ -39,7 +39,6 @@ typedef struct __attribute__((packed))
     uint8_t version;   // PairingPacket version
     uint8_t type;      // the type of packet (PairingPacket.Type)
     uint32_t size;     // Size of the payload in bytes
-    const void *payload;
 } adb__pair_packet_t;
 
 typedef enum 
@@ -81,10 +80,19 @@ static inline bool adb__verify_pairing_code(
     return true;
 }
 
+static void adb__log_pair_packet(
+        const adb__pair_packet_t *pkt)
+{
+    ADB__DEBUG("ppkt: version=0x%02X, type=0x%02X (%s), size=0x%08X bytes",
+            pkt->version, 
+            pkt->type, adb__pair_packet_type_strings[pkt->type],
+            pkt->size);
+}
+
 static adb_error_t adb__pair_read_packet(
         adb_conn_t *conn,
-        adb__pair_packet_t *pkt,
-        void **out_buf)
+        adb__pair_packet_t *out_pkt,
+        void **out_payload)
 {
     static const size_t version_offset =
         offsetof(adb__pair_packet_t, version);
@@ -92,12 +100,14 @@ static adb_error_t adb__pair_read_packet(
         offsetof(adb__pair_packet_t, type);
     static const size_t plsz_offset = 
         offsetof(adb__pair_packet_t, size);
-    uint8_t buffer[sizeof(*pkt) - sizeof(void*)] = {0};
+    uint8_t buffer[sizeof(*out_pkt)] = {0};
     adb_error_t res = ADB_ERR_OK;
     uint8_t version = 0;
     uint8_t type = 0;
+    uint32_t size = 0;
+    void *tmp_payload = NULL;
 
-    if(!conn || !pkt)
+    if(!conn || !out_pkt)
         return ADB_ERR_PARAM;
 
     ADB__INFO("reading pairing packet");
@@ -130,45 +140,45 @@ static adb_error_t adb__pair_read_packet(
         return ADB_ERR_UNSUPPORTED;
     }
 
-    pkt->type = type;
-    pkt->version = version;
-    pkt->size = 
+    size = 
         (uint32_t)(buffer[plsz_offset] << 24) |
         (uint32_t)(buffer[plsz_offset + 1] << 16) |
         (uint32_t)(buffer[plsz_offset + 2] << 8) |
         (uint32_t)buffer[plsz_offset + 3];
 
-    if(!ADB__IN_RANGE(pkt->size, 1, 
-                ADB__MAX_PAIR_PAYLOAD_SIZE))
+    if(!ADB__IN_RANGE(size, 1, ADB__PAIR_MAX_PAYLOAD_SIZE))
     {
-        ADB__ERROR("pairing paylod size not within a safe range");
-        ADB__INFO("range: [%d, %d], got: %u bytes",
-                1, ADB__MAX_PAIR_PAYLOAD_SIZE,
-                pkt->size);
+        ADB__ERROR("pairing payload size not within a safe range");
+        ADB__INFO("safe range: [%d, %d], got: %u bytes",
+                1, ADB__PAIR_MAX_PAYLOAD_SIZE, size);
         return ADB_ERR_PROTOCOL;
     }
 
-    *out_buf = adb__malloc(pkt->size);
-    if(!*out_buf)
+    tmp_payload = adb__malloc(size);
+    if(!tmp_payload)
         return ADB_ERR_NO_MEM;
 
-    res = adb__conn_read(conn, *out_buf, pkt->size);
+    res = adb__conn_read(conn, tmp_payload, size);
     if(res != ADB_ERR_OK)
     {
         adb__log_err_adb(res, "failed to read pairing payload");
         return res;
     }
 
+    out_pkt->version = version;
+    out_pkt->type = type;
+    out_pkt->size = size;
+    *out_payload = tmp_payload;
+
     ADB__INFO("read pairing packet sucessfully");
-    ADB__DEBUG("ppkt: version: 0x%02X, type: 0x%02X (%s), size: %u bytes",
-            pkt->version, pkt->type, adb__pair_packet_type_strings[pkt->type],
-            pkt->size);
+    adb__log_pair_packet(out_pkt);
     return ADB_ERR_OK;
 }
 
 static adb_error_t adb__pair_write_packet(
         adb_conn_t *conn,
-        adb__pair_packet_t *pkt)
+        adb__pair_packet_t *pkt,
+        const void *payload)
 {
     static const size_t version_offset =
         offsetof(adb__pair_packet_t, version);
@@ -176,16 +186,14 @@ static adb_error_t adb__pair_write_packet(
         offsetof(adb__pair_packet_t, type);
     static const size_t plsz_offset = 
         offsetof(adb__pair_packet_t, size);
-    uint8_t buffer[sizeof(*pkt) - sizeof(void*)] = {0};
+    uint8_t buffer[sizeof(*pkt)] = {0};
     adb_error_t res = ADB_ERR_OK;
 
     if(!conn || !pkt)
         return ADB_ERR_PARAM;
 
     ADB__INFO("writing pairing packet");
-    ADB__DEBUG("ppkt: version: 0x%02X, type: 0x%02X (%s), size: %u bytes",
-            pkt->version, pkt->type, adb__pair_packet_type_strings[pkt->type],
-            pkt->size);
+    adb__log_pair_packet(pkt);
 
     buffer[version_offset] = pkt->version;
     buffer[type_offset] = pkt->type;
@@ -201,7 +209,7 @@ static adb_error_t adb__pair_write_packet(
         return res;
     }
 
-    res = adb__conn_write(conn, pkt->payload, pkt->size);
+    res = adb__conn_write(conn, payload, pkt->size);
     if(res != ADB_ERR_OK)
     {
         adb__log_err_adb(res, "failed to write pairing payload");
@@ -282,7 +290,7 @@ static adb_error_t adb__exchange_message(
         goto cleanup;
     }
 
-    adb__log_print_payload(
+    adb__log_payload(
             password, 
             sizeof(password), 
             "spake2 password");
@@ -319,9 +327,8 @@ static adb_error_t adb__exchange_message(
     pkt.version = ADB__PAIR_HEADER_VER;
     pkt.type = ADB__PAIR_PACKET_SPAKE2;
     pkt.size = (uint32_t)my_msg_size;
-    pkt.payload = my_msg;
 
-    ret = adb__pair_write_packet(conn, &pkt);
+    ret = adb__pair_write_packet(conn, &pkt, my_msg);
     if(ret != ADB_ERR_OK)
         goto cleanup;
 
@@ -396,9 +403,8 @@ static adb_error_t adb__exchange_info(
     pkt.version = ADB__PAIR_HEADER_VER;
     pkt.type = ADB__PAIR_PACKET_PEER_INFO;
     pkt.size = (uint32_t)sizeof(enc_my_info);
-    pkt.payload = enc_my_info;
 
-    ret = adb__pair_write_packet(conn, &pkt);
+    ret = adb__pair_write_packet(conn, &pkt, enc_my_info);
     if(ret != ADB_ERR_OK)
         goto cleanup; 
    
@@ -422,7 +428,7 @@ static adb_error_t adb__exchange_info(
     if(ret != ADB_ERR_OK)
         goto cleanup;
 
-    adb__log_print_payload(
+    adb__log_payload(
             &their_info, sizeof(their_info), 
             "their info");
     if(their_info.type >= ADB__PEER_INFO_COUNT)
@@ -495,11 +501,7 @@ adb_error_t adb_pair(
     if(ret != ADB_ERR_OK)
         return ret;
    
-    ret = adb__conn_upgrade_tls(conn);
-    if(ret != ADB_ERR_OK)
-        goto cleanup;
-
-    ret = adb__tls_handshake(adb__conn_get_tls(conn), ctx, key);
+    ret = adb__conn_upgrade_tls(conn, key);
     if(ret != ADB_ERR_OK)
         goto cleanup;
 
