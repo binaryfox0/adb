@@ -309,7 +309,6 @@ static adb_error_t adb__exchange_message(
         ADB__INFO("reason: out of memory");
         return ADB_ERR_NO_MEM;
     }
-    
 
     if(!spake2_generate_msg(
             spake2, 
@@ -391,6 +390,9 @@ static adb_error_t adb__exchange_info(
             NULL);
     if(ret != ADB_ERR_OK)
         goto cleanup;
+
+    adb__log_multiline_text((const char*)my_info.data, "public key");
+
     ret = adb__aes_encrypt(
             &aes,
             &my_info,
@@ -491,7 +493,7 @@ adb_error_t adb_pair(
     uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
     size_t key_material_len = 0;
     char device_guid[ADB__MEMSZ(adb__peer_info_t, data)] = {0};
-    struct sockaddr addr = {0};
+    //struct sockaddr addr = {0};
 
     if(!ctx || !adb__verify_pairing_code(code, code_len))
         return ADB_ERR_PARAM;
@@ -521,6 +523,7 @@ adb_error_t adb_pair(
     if(ret != ADB_ERR_OK)
         goto cleanup;
 
+    /*
     adb__mdns_find_service(device_guid, &addr);
     if(addr.sa_family != AF_UNSPEC)
     {
@@ -530,6 +533,8 @@ adb_error_t adb_pair(
         adb_conn_destroy(conn2);
 
     }
+    */
+
     ADB__INFO("pairing wireless device successfully");
 
 cleanup:

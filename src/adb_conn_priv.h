@@ -21,7 +21,7 @@ adb_error_t adb__conn_upgrade_tls(
         adb_conn_t *conn,
         adb_key_t *key);
 
-uint32_t adb_conn_get_max_payload(
+uint32_t adb__conn_get_max_payload_size(
         adb_conn_t *conn);
 
 adb__tls_t *adb__conn_get_tls(

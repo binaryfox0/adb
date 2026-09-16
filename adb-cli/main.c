@@ -129,6 +129,8 @@ static void pair_command(
             "failed to create libadb context", err, cleanup);
     CHECK(adb_key_generate(&key, ctx),
             "failed to generate new key", err, cleanup);
+//    CHECK(adb_key_load(&key, ctx, "/data/data/com.termux/files/home/.android/adbkey"), 
+//            "failed to load private key from file", err, cleanup);
     CHECK(adb_pair(ctx, host, (uint16_t)port, code, 6, key), 
             "failed to pair with given device", err, cleanup);
 

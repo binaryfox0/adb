@@ -72,6 +72,7 @@ adb_error_t adb__packet_read(
 {
     adb_error_t res = ADB_ERR_OK;
     adb__packet_serialized_t spkt = {0};
+    uint32_t exchanged_size = 0;
     void *tmp_payload = NULL;
     if(!conn || !out_pkt || !out_payload)
         return ADB_ERR_PARAM;
@@ -84,10 +85,27 @@ adb_error_t adb__packet_read(
 
     if(spkt.payload_size > ADB__PACKET_MAX_PAYLOAD_SIZE)
     {
-        ADB__ERROR("payload size is not within a safe range");
-        ADB__INFO("safe range: [%d, %d], got: %u bytes",
-                0, ADB__PACKET_MAX_PAYLOAD_SIZE,
+        ADB__ERROR("payload size exceeds the maximum allowed size");
+        ADB__INFO("max size: %d bytes, got: %u bytes",
+                ADB__PACKET_MAX_PAYLOAD_SIZE,
                 spkt.payload_size);
+        return ADB_ERR_PROTOCOL;
+    }
+
+    exchanged_size = adb__conn_get_max_payload_size(conn);
+    if(spkt.payload_size > exchanged_size)
+    {
+        ADB__ERROR("payload size exceeds the maximum exchanged size");
+        ADB__INFO("max size: %u bytes, got: %u bytes",
+                exchanged_size, spkt.payload_size);
+        return ADB_ERR_PROTOCOL;
+    }
+
+    if(spkt.magic != (spkt.command ^ 0xffffffff))
+    {
+        ADB__ERROR("respond packet command magic mismatch");
+        ADB__INFO("expected: 0x%08X, got: 0x%08X",
+                spkt.command ^ 0xffffffff, spkt.magic);
         return ADB_ERR_PROTOCOL;
     }
 

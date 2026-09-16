@@ -440,6 +440,7 @@ adb_error_t adb_key_generate_pubkey(
         const size_t size,
         size_t *out_size)
 {
+    int err = 0;
     adb__android_pubkey_t pubkey = {0};
     size_t encoded_size = ADB__BASE64_SIZE(ADB__ANDROID_PUBKEY_SIZE);
     struct passwd *pw = NULL;
@@ -474,12 +475,18 @@ adb_error_t adb_key_generate_pubkey(
     if(!buffer)
         return ADB_ERR_OK;
 
-    mbedtls_base64_encode(
+    err = mbedtls_base64_encode(
             buffer, 
-            encoded_size, 
+            size, 
             &encoded_size, /* must not be NULL */ 
             (uint8_t*)&pubkey, 
             ADB__ANDROID_PUBKEY_SIZE);
+    if(err != 0)
+    {
+        adb__log_err_mbedtls(err, "failed to encode public key");
+        return ADB_ERR_CRYPTO;
+    }
+
     snprintf(
             (char*)buffer + encoded_size, 
             size - encoded_size, 
