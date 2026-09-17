@@ -124,35 +124,29 @@ static const char *adb__addr_to_string(
         const struct sockaddr *addr)
 {
     static _Thread_local char buffer[INET6_ADDRSTRLEN + 8];
-    char ip[INET6_ADDRSTRLEN] = {0};
+
+    char host[INET6_ADDRSTRLEN] = {0};
     uint16_t port = 0;
 
-    struct sockaddr_in sin4 = {0};
-    struct sockaddr_in6 sin6 = {0};
     if(!addr)
         return NULL;
 
+    
+    if(adb__sockaddr_get_host(addr, 
+                host, sizeof(host)) != ADB_ERR_OK)
+        return NULL;
+    port = adb__sockaddr_get_port(addr);
     switch(addr->sa_family)
     {
         case AF_INET:
-            memcpy(&sin4, addr, sizeof(sin4));
-            port = ntohs(sin4.sin_port);
-            if(!inet_ntop(AF_INET, &sin4.sin_addr, 
-                        ip, sizeof(ip)))
-                return NULL;
             if(snprintf(buffer, sizeof(buffer), 
-                        "%s:%u", ip, port) < 0)
+                        "%s:%u", host, port) < 0)
                 return NULL;
             break;
 
         case AF_INET6:
-            memcpy(&sin6, addr, sizeof(sin6));
-            port = ntohs(sin6.sin6_port);
-            if(!inet_ntop(AF_INET6, &sin6.sin6_addr, 
-                        ip, sizeof(ip)))
-                return NULL;
             if(snprintf(buffer, sizeof(buffer), 
-                        "[%s]:%u", ip, port) < 0)
+                        "[%s]:%u", host, port) < 0)
                 return NULL;
             break;
 

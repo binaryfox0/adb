@@ -20,7 +20,7 @@ static void adb__log_packet(
 {
     ADB__DEBUG("pkt: command: 0x%08X (%.4s), "
             "arg0: 0x%08X, arg1=0x%08X, size=0x%08X bytes",
-            pkt->command, (const uint8_t*)&pkt->command,
+            pkt->command, (const char*)&pkt->command,
             pkt->arg0, pkt->arg1, pkt->payload_size);
 }
 
@@ -131,4 +131,23 @@ success:
     adb__log_packet(out_pkt);
 
     return ADB_ERR_OK;
+}
+
+bool adb__packet_check_cmd(
+        adb__packet_t *pkt,
+        const uint32_t expected)
+{
+    bool ret = false;
+    if(!pkt)
+        return false;
+    
+    ret = pkt->command == expected;
+    if(!ret)
+    {
+        ADB__ERROR("unexpected packet type");
+        ADB__INFO("expected: 0x%08X (%.4s), got: 0x%08X (%.4s)",
+                expected, (const char*)&expected,
+                pkt->command, (const char*)&pkt->command);
+    }
+    return ret;
 }

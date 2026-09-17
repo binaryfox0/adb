@@ -1,18 +1,24 @@
-#include "adb/adb_log.h"
-#include <aparse.h>
-#include <adb/adb.h>
-#include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <ctype.h>
+
+#include <pwd.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#include <aparse.h>
+#include <adb/adb.h>
 
 #define error aparse_prog_error
 #define info aparse_prog_info
 
-#define CHECK(x, msg, res, label) \
+#define CHECK(x, res, label, ...) \
     if(((res) = x) != ADB_ERR_OK) \
     { \
-        error((msg)); \
+        error(__VA_ARGS__); \
         info("reason: %s", adb_strerror((res))); \
         goto label; \
     }
@@ -59,9 +65,9 @@ static void query_command(
     (void)args;
     (void)param;
     
-    CHECK(adb_ctx_create(&ctx), "failed to create libadb context", err, cleanup);
+    CHECK(adb_ctx_create(&ctx), err, cleanup, "failed to create libadb context");
     CHECK(adb_query_wired(ctx, &infos, &count), 
-            "failed to query wired devices", err, cleanup);
+            err, cleanup, "failed to query wired devices");
     for(size_t i = 0; i < count; i++)
     {
         adb_wired_info_t *conn_info = infos[i];
@@ -73,6 +79,107 @@ cleanup:
     adb_ctx_destroy(ctx);
 }
 
+static const char *get_home_dir(void)
+{
+    const char *home = NULL;
+    struct passwd *password_entry = NULL;
+
+    home = getenv("HOME");
+    if(home != NULL && home[0] != '\0')
+        return home;
+
+    password_entry = getpwuid(getuid());
+    if(password_entry != NULL &&
+            password_entry->pw_dir != NULL &&
+            password_entry->pw_dir[0] != '\0')
+        return password_entry->pw_dir;
+
+    return NULL;
+}
+
+static bool parse_ip(
+        const char *input,
+        char *out_host,
+        size_t size,
+        uint16_t *out_port)
+{
+    const char *host_begin;
+    const char *host_end;
+    const char *port_begin;
+    const char *p;
+    unsigned long port = 0;
+    size_t host_len;
+
+    if(!input || !*input || !out_host || !size || !out_port)
+        return false;
+
+    if(input[0] == '[')
+    {
+        /* IPv6: [2001:db8::1]:5555 */
+        host_begin = input + 1;
+        host_end = strchr(host_begin, ']');
+        if(!host_end || host_end[1] != ':')
+            return false;
+
+        port_begin = host_end + 2;
+        if(!*port_begin)
+            return false;
+
+        host_len = (size_t)(host_end - host_begin);
+        if(!host_len || host_len >= INET6_ADDRSTRLEN)
+            return false;
+    }
+    else
+    {
+        /* IPv4: 192.168.1.10:5555 */
+        host_begin = input;
+        host_end = strchr(input, ':');
+        if(!host_end || host_end == host_begin)
+            return false;
+
+        port_begin = host_end + 1;
+        if(!*port_begin)
+            return false;
+
+        host_len = (size_t)(host_end - host_begin);
+        if(host_len >= INET_ADDRSTRLEN)
+            return false;
+
+        /* Unbracketed IPv6 is not supported. */
+        if(strchr(port_begin, ':'))
+            return false;
+    }
+
+    for(p = port_begin; *p; ++p)
+    {
+        if(*p < '0' || *p > '9')
+            return false;
+
+        port = port * 10UL + (unsigned long)(*p - '0');
+        if(port > UINT16_MAX)
+            return false;
+    }
+
+    if(size <= host_len)
+        return false;
+
+    memcpy(out_host, host_begin, host_len);
+    out_host[host_len] = '\0';
+    *out_port = (uint16_t)port;
+
+    return true;
+}
+
+static bool is_file_exist(
+        const char *path)
+{
+    FILE *file = fopen(path, "r");
+    if(!file)
+        return errno == ENOENT ? false : true;
+    fclose(file);
+    return true;
+}
+
 static void pair_command(
         const aparse_arg *args,
         void *param)
@@ -80,10 +187,9 @@ static void pair_command(
     const char *ip = ((const char**)param)[0];
     const char *code = ((const char**)param)[1];
 
-    const char *host = NULL;
-    char *colon = NULL;
-    long port = 0;
-    char *end = NULL;
+    char key_path[PATH_MAX] = {0};
+    char host[INET6_ADDRSTRLEN] = {0};
+    uint16_t port = 0;
 
     adb_error_t err = ADB_ERR_OK;
     adb_ctx_t *ctx = NULL;
@@ -92,53 +198,88 @@ static void pair_command(
 
     (void)args;
 
-    host = ip;
-    colon = (char*)(uintptr_t)strchr(ip, ':');
-
-    if (!colon)
+    if(!parse_ip(ip, host, sizeof(host), &port))
     {
-        error("Invalid address \"%s\": missing port (expected host:port)", ip);
+        error("failed to parse \"%s\" as host:port", ip);
         return;
     }
-
-    *colon = '\0';
-    errno = 0;
-    port = strtol(colon + 1, &end, 10);
-    if(
-            errno == ERANGE || 
-            port == LONG_MIN || port == LONG_MAX)
-    {
-        error("Invalid address \"%s\": port is out of range", ip);
-        return;
-    }
-
-    if(end == colon + 1 || *end != '\0')
-    {
-        error("Invalid address \"%s\": port must be a number", ip);
-        return;
-    }
-
-    if(port == 0 || port > UINT16_MAX)
-    {
-        error("Invalid address \"%s\": port must be between 1 and %d",
-              ip, UINT16_MAX);
-        return;
-    }
-
+    
     CHECK(adb_ctx_create(&ctx), 
-            "failed to create libadb context", err, cleanup);
-    CHECK(adb_key_generate(&key, ctx),
-            "failed to generate new key", err, cleanup);
-//    CHECK(adb_key_load(&key, ctx, "/data/data/com.termux/files/home/.android/adbkey"), 
-//            "failed to load private key from file", err, cleanup);
-    CHECK(adb_pair(ctx, host, (uint16_t)port, code, 6, key), 
-            "failed to pair with given device", err, cleanup);
+            err, cleanup, "failed to create libadb context");
+    CHECK(adb_conn_create_wireless(&conn, ctx, host, port),
+            err, cleanup, "failed to create connection for pairing");
+
+    snprintf(key_path, sizeof(key_path), "%s/%s",
+            get_home_dir(), ".android/adbkey");
+    if(is_file_exist(key_path))
+    {
+        CHECK(adb_key_load(&key, ctx, key_path), 
+                err, cleanup, "failed to load key from \"%s\"", key_path);
+    } else {
+        info("no key was found, generating a new one");
+        CHECK(adb_key_generate(&key, ctx),
+                err, cleanup, "failed to generate new key");
+        CHECK(adb_key_save(key, key_path), 
+                err, cleanup, "failed to save key to \"%s\"", key_path);
+    }
+
+    CHECK(adb_pair(conn, code, key, NULL, 0),
+            err, cleanup, "failed to pair with given device");
 
 cleanup:
     adb_key_destroy(key);
     adb_conn_destroy(conn);
     adb_ctx_destroy(ctx);
 }
+
+static void connect_command(
+        const aparse_arg *args,
+        void *param)
+{
+    const char *ip = ((const char**)param)[0];
+
+    char key_path[PATH_MAX] = {0};
+    char host[INET6_ADDRSTRLEN] = {0};
+    uint16_t port = 0;
+
+    adb_error_t err = ADB_ERR_OK;
+    adb_ctx_t *ctx = NULL;
+    adb_conn_t *conn = NULL;
+    adb_key_t *key = NULL;
+
+    (void)args;
+
+    if(!parse_ip(ip, host, sizeof(host), &port))
+    {
+        error("failed to parse \"%s\" as host:port", ip);
+        return;
+    }
+
+    CHECK(adb_ctx_create(&ctx), 
+            err, cleanup, "failed to create libadb context");
+    CHECK(adb_conn_create_wireless(&conn, ctx, host, port),
+            err, cleanup, "failed to create connection for pairing");
+    snprintf(key_path, sizeof(key_path), "%s/%s",
+            get_home_dir(), ".android/adbkey");
+    if(is_file_exist(key_path))
+    {
+        CHECK(adb_key_load(&key, ctx, key_path), 
+                err, cleanup, "failed to load key from \"%s\"", key_path);
+    } else {
+        error("no key was found at \"%s\", "
+                "please re-pair with the device for a new one",
+                key_path);
+        goto cleanup;
+    }
+    CHECK(adb_conn_handshake(conn, key), 
+            err, cleanup, "failed to perform handshake with %s", ip);
+
+cleanup:
+    adb_key_destroy(key);
+    adb_conn_destroy(conn);
+    adb_ctx_destroy(ctx);
+}
+
 
 static void pubkey_command(
         const aparse_arg *args, 
@@ -156,12 +297,12 @@ static void pubkey_command(
     (void)args;
 
     CHECK(adb_ctx_create(&ctx),
-            "failed to create libadb context", err, cleanup);
+            err, cleanup, "failed to create libadb context");
     CHECK(adb_key_load(&key, ctx, path),
-            "failed to load adb private key", err, cleanup);
+            err, cleanup, "failed to load adb private key");
     CHECK(adb_key_generate_pubkey(
                 key, pubkey, sizeof(pubkey), &pubkey_size),
-            "failed to generate public key from private key", err, cleanup);
+            err, cleanup, "failed to generate public key from private key");
 
     if(output)
     {
@@ -171,7 +312,7 @@ static void pubkey_command(
         file = fopen(output, "w");
         if(!file)
         {
-            error("failed to open output file");
+            error("failed to open \"%s\"", output);
             info("reason: %s", strerror(errno));
             goto cleanup;
         }
@@ -179,7 +320,7 @@ static void pubkey_command(
         pubkey_len = strlen((char*)pubkey);
         if(fwrite(pubkey, 1, pubkey_len, file) != pubkey_len)
         {
-            error("failed to write to output file");
+            error("failed to write key to \"%s\"", output);
             info("reason: %s", strerror(errno));
             goto cleanup;
         }
@@ -207,6 +348,15 @@ int main(int argc, char **argv)
                 "Pairing code alongside with the IP"),
         aparse_arg_end_marker
     };
+    
+    aparse_arg connect_args[] =
+    {
+        aparse_arg_string(
+                "ip", 
+                NULL, 0, 
+                "IP to target device (host:port)"),
+        aparse_arg_end_marker
+    };
 
     aparse_arg pubkey_args[] = 
     {
@@ -231,6 +381,14 @@ int main(int argc, char **argv)
                     0, sizeof(const char*),
                     sizeof(const char*), sizeof(const char*)
                 }, 2),
+        aparse_arg_subparser_impl(
+                "connect", 
+                connect_args, connect_command, 
+                NULL, 0, 
+                "Connect wireless ADB device through TCP",
+                (size_t[]){
+                    0, sizeof(const char*),
+                }, 1),
         aparse_arg_subparser(
                 "query",
                 NULL, query_command,

@@ -2,32 +2,59 @@
 #include "adb_query_priv.h"
 
 #include <stdbool.h>
+
+#ifdef _WIN32
+#   include <winsock2.h>
+#   include <ws2tcpip.h>
+#else
+#   include <arpa/inet.h>
+#endif
+
 #include <libusb.h>
+#include <mdns.h>
 
 #include "adb_ctx_priv.h"
 #include "adb_alloc_priv.h"
 #include "adb_log_priv.h"
 #include "adb_lookup.h"
 
-#define ADB__INTERFACE_CLASS    0xFF
-#define ADB__INTERFACE_SUBCLASS 0x42
-#define ADB__INTERFACE_PROTOCOL 0x01
+#define ADB__USB_INTERFACE_CLASS    0xFF
+#define ADB__USB_INTERFACE_SUBCLASS 0x42
+#define ADB__USB_INTERFACE_PROTOCOL 0x01
 
-#define ADB__DEVICE_CLASS       0xDC
-#define ADB__DEVICE_SUBCLASS    0x02
+#define ADB__USB_DEVICE_CLASS       0xDC
+#define ADB__USB_DEVICE_SUBCLASS    0x02
+
+#define ADB__MDNS_NAME_LENGTH_MAX   256
+#define ADB__MDNS_BUFFER_SIZE       4096
+
+typedef struct
+{
+    char hostname[ADB__MDNS_NAME_LENGTH_MAX];
+    uint16_t port;
+
+    struct sockaddr_in sin;
+    struct sockaddr_in6 sin6;
+
+    bool have_srv;
+    bool have_ipv4;
+    bool have_ipv6;
+} adb__mdns_find_result_t;
+
+static uint32_t adb__query_timeout_ms = 2000;
 
 static bool adb__find_adb_interface(
         libusb_device *device,
-        uint8_t *itf_idx,
-        uint8_t *read_ep,
-        uint8_t *write_ep)
+        uint8_t *out_itf_idx,
+        uint8_t *out_read_ep,
+        uint8_t *out_write_ep)
 {
     int res = 0;
     struct libusb_config_descriptor *config = NULL;
     uint8_t bulk_in = 0;
     uint8_t bulk_out = 0;
 
-    if(!device || !itf_idx || !read_ep || !write_ep)
+    if(!device || !out_itf_idx || !out_read_ep || !out_write_ep)
         return false;
 
     res = libusb_get_active_config_descriptor(device, &config);
@@ -52,12 +79,12 @@ static bool adb__find_adb_interface(
 
         itf_desc = &itf->altsetting[0];
 
-        if(!(itf_desc->bInterfaceProtocol == ADB__INTERFACE_PROTOCOL &&
+        if(!(itf_desc->bInterfaceProtocol == ADB__USB_INTERFACE_PROTOCOL &&
                 (
-                    (itf_desc->bInterfaceClass == ADB__INTERFACE_CLASS &&
-                     itf_desc->bInterfaceSubClass == ADB__INTERFACE_SUBCLASS) ||
-                    (itf_desc->bInterfaceClass == ADB__DEVICE_CLASS &&
-                     itf_desc->bInterfaceSubClass == ADB__DEVICE_SUBCLASS)
+                    (itf_desc->bInterfaceClass == ADB__USB_INTERFACE_CLASS &&
+                     itf_desc->bInterfaceSubClass == ADB__USB_INTERFACE_SUBCLASS) ||
+                    (itf_desc->bInterfaceClass == ADB__USB_DEVICE_CLASS &&
+                     itf_desc->bInterfaceSubClass == ADB__USB_DEVICE_SUBCLASS)
                 )))
         {
             continue;
@@ -89,9 +116,9 @@ static bool adb__find_adb_interface(
 
         if(found_in && found_out)
         {
-            *itf_idx = i;
-            *read_ep = bulk_in;
-            *write_ep = bulk_out;
+            *out_itf_idx = i;
+            *out_read_ep = bulk_in;
+            *out_write_ep = bulk_out;
 
             libusb_free_config_descriptor(config);
             return true;
@@ -267,7 +294,8 @@ static adb_error_t adb__append_conn_info(
     conn_info->read_ep = read_ep;
     conn_info->write_ep = write_ep;
 
-    snprintf((char *)conn_info->manufacturer, sizeof(conn_info->manufacturer),
+    snprintf((char *)conn_info->manufacturer, 
+            sizeof(conn_info->manufacturer),
             "%s", manufacturer[0] ? (char *)manufacturer : "unknown");
     snprintf((char *)conn_info->product, sizeof(conn_info->product),
             "%s", product[0] ? (char *)product : "unknown");
@@ -287,15 +315,15 @@ static adb_error_t adb__append_conn_info(
 
 adb_error_t adb_query_wired(
         adb_ctx_t *ctx,
-        adb_wired_info_t ***infos,
-        size_t *info_count)
+        adb_wired_info_t ***out_infos,
+        size_t *out_info_count)
 {
     adb_error_t ret = ADB_ERR_OK;
     int res = 0;
     libusb_device **list = NULL;
     ssize_t usb_count = 0;
 
-    if(!ctx || !infos || !info_count)
+    if(!ctx || !out_infos || !out_info_count)
         return ADB_ERR_PARAM;
 
     ADB__INFO("starting ADB wired device query");
@@ -368,8 +396,8 @@ adb_error_t adb_query_wired(
 
     libusb_free_device_list(list, true);
 
-    *infos = ctx->wired_infos;
-    *info_count = ctx->wired_info_count;
+    *out_infos = ctx->wired_infos;
+    *out_info_count = ctx->wired_info_count;
 
     ADB__INFO("ADB device query completed: %zu device(s)",
             ctx->wired_info_count);
@@ -396,6 +424,288 @@ void adb__wired_info_destroy(
     adb__free(info);
 }
 
+static int adb__mdns_record_callback(
+        int sock, 
+        const struct sockaddr* from, 
+        size_t addrlen,
+        mdns_entry_type_t entry, 
+        uint16_t query_id, 
+        uint16_t rtype,
+        uint16_t rclass, 
+        uint32_t ttl, 
+        const void* data, 
+        size_t size,
+        size_t name_offset, 
+        size_t name_length, 
+        size_t record_offset,
+        size_t record_length, 
+        void* user_data)
+{
+    adb__mdns_find_result_t *result = user_data;
+    char name[ADB__MDNS_NAME_LENGTH_MAX] = {0};
+ 
+    (void)sock; 
+    (void)from; 
+    (void)addrlen;
+    (void)entry; 
+    (void)query_id; 
+    (void)rtype;
+    (void)rclass; 
+    (void)ttl; 
+    (void)data; 
+    (void)size;
+    (void)name_offset; 
+    (void)name_length; 
+
+    mdns_string_t record_name = {0};
+    size_t offset = name_offset;
+
+    record_name = mdns_string_extract(
+            data, size,
+            &offset,
+            name, sizeof(name));
+
+    ADB__DEBUG("record: name=\"%.*s\" type=%u",
+              (int)record_name.length,
+              record_name.str, rtype);
+
+    if (rtype == MDNS_RECORDTYPE_SRV)
+    {
+        mdns_record_srv_t srv = mdns_record_parse_srv(
+                data, size,
+                record_offset, record_length,
+                name, sizeof(name));
+        if(srv.name.str && srv.name.length < sizeof(result->hostname))
+        {
+            memcpy(result->hostname, srv.name.str, srv.name.length);
+            result->hostname[srv.name.length] = '\0';
+            result->port = srv.port;
+            result->have_srv = true;
+        }
+
+        ADB__DEBUG("srv: target=\"%.*s\" port=%u priority=%u weight=%u",
+                  (int)srv.name.length, srv.name.str,
+                  srv.port, srv.priority, srv.weight);
+    }
+    else if (rtype == MDNS_RECORDTYPE_A)
+    {
+        struct sockaddr_in sin = {0};
+        char address[INET_ADDRSTRLEN] = {0};
+
+        mdns_record_parse_a(
+                data, size,
+                record_offset, record_length,
+                &sin);
+            
+        inet_ntop(AF_INET, &sin.sin_addr, 
+                address, sizeof(address));
+
+        if(result->have_srv && 
+                record_name.length == strlen(result->hostname) &&
+                !memcmp(record_name.str, result->hostname, 
+                    record_name.length))
+        {
+            sin.sin_port = ntohs(result->port);
+            result->sin = sin;
+            result->have_ipv4 = true;
+        }
+        ADB__DEBUG("a: address=\"%s\"", address);
+    }
+    else if (rtype == MDNS_RECORDTYPE_AAAA)
+    {
+        struct sockaddr_in6 sin6 = {0};
+        char address[INET6_ADDRSTRLEN] = {0};
+
+        mdns_record_parse_aaaa(
+                data, size,
+                record_offset, record_length,
+                &sin6);
+
+        inet_ntop(AF_INET6, &sin6.sin6_addr, 
+                address, sizeof(address));
+
+        if(result->have_srv && 
+                record_name.length == strlen(result->hostname) &&
+                !memcmp(record_name.str, result->hostname, 
+                    record_name.length))
+        {
+            sin6.sin6_port = ntohs(result->port);
+            result->sin6 = sin6;
+            result->have_ipv6 = true;
+        }
+        ADB__DEBUG("aaaa: address=\"%s\"", address);
+    }
+
+    return 0;
+}
+
+static adb_error_t adb__mdns_timeout(
+        const int sock,
+        const uint32_t timeout_ms)
+{
+    int err = 0;
+    fd_set readfds;
+    struct timeval timeout = {0};
+    
+    FD_ZERO(&readfds);
+    FD_SET(sock, &readfds);
+    timeout.tv_sec = timeout_ms / 1000;
+    timeout.tv_usec = (timeout_ms % 1000) * 1000;
+
+    err = select(
+            sock + 1,
+            &readfds,
+            NULL,
+            NULL,
+            &timeout);
+    if(err < 0)
+    {
+        adb__log_err_errno("failed to wait for mDNS response");
+        return ADB_ERR_NETWORK;
+    }
+    if(err == 0)
+    {
+        ADB__ERROR("received no mDNS response for %ums", timeout_ms);
+        return ADB_ERR_TIMEOUT;
+    }
+    return ADB_ERR_OK;
+}
+
+static adb_error_t adb__query_wireless_with_guid_impl(
+        const char *guid,
+        struct sockaddr *out)
+{
+    adb_error_t ret = ADB_ERR_OK;
+    char query_name[ADB__MDNS_NAME_LENGTH_MAX] = {0};
+    int written = 0;
+    int sock = 0;
+    int query_id = 0;
+    uint8_t buffer[ADB__MDNS_BUFFER_SIZE] = {0};
+
+    adb__mdns_find_result_t result = {0};
+    mdns_query_t queries[2] = {0};
+
+    if(!guid || !out)
+        return ADB_ERR_PARAM;
+
+    ADB__INFO("finding wireless device \"%s\"", guid);
+
+    written = snprintf(query_name, sizeof(query_name),
+            "%s._adb-tls-connect._tcp.local.", guid);
+    if(written >= (int)sizeof(query_name))
+    {
+        ADB__ERROR("device GUID was too long to fit into buffer");
+        ADB__INFO("GUID length: %lu bytes", strlen(guid));
+        return ADB_ERR_GENERIC;
+    }
+
+    sock = mdns_socket_open_ipv4(NULL);
+    if(sock < 0)
+    {
+        adb__log_err_errno("failed to create mDNS socket");
+        return ADB_ERR_NETWORK;
+    }
+
+    query_id = mdns_query_send(
+            sock,
+            MDNS_RECORDTYPE_SRV,
+            query_name,
+            (size_t)written,
+            buffer,
+            sizeof(buffer),
+            0);
+    if(query_id < 0)
+    {
+        adb__log_err_errno("failed to send mDNS service query");
+        ret = ADB_ERR_NETWORK;
+        goto cleanup;
+    }
+
+    ret = adb__mdns_timeout(sock, adb__query_timeout_ms);
+    if(ret != ADB_ERR_OK)
+        goto cleanup;
+
+    mdns_query_recv(
+            sock,
+            buffer,
+            sizeof(buffer),
+            adb__mdns_record_callback,
+            &result,
+            query_id);
+
+    if(!result.have_srv)
+    {
+        out->sa_family = AF_UNSPEC;
+        goto cleanup;
+    }
+
+    if(result.have_ipv4 || result.have_ipv6)
+    {
+        if(result.have_ipv4)
+            memcpy(out, &result.sin, sizeof(result.sin));
+        else
+            memcpy(out, &result.sin6, sizeof(result.sin6));
+
+        ADB__INFO("found wireless device \"%s\" successfully", guid);
+        goto cleanup;
+    }
+
+    queries[0].name = result.hostname;
+    queries[1].name = result.hostname;
+    queries[0].length = strlen(result.hostname);
+    queries[1].length = strlen(result.hostname);
+    queries[0].type = MDNS_RECORDTYPE_A;
+    queries[1].type = MDNS_RECORDTYPE_AAAA;
+
+    query_id = mdns_multiquery_send(
+            sock,
+            queries,
+            2,
+            buffer,
+            sizeof(buffer),
+            0);
+    if(query_id < 0)
+    {
+        adb__log_err_errno("failed to send mDNS address queries");
+        ret = ADB_ERR_NETWORK;
+        goto cleanup;
+    }
+    
+    ret = adb__mdns_timeout(sock, adb__query_timeout_ms);
+    if(ret != ADB_ERR_OK)
+        goto cleanup;
+
+    /*
+     * Do not zero the result as A/AAAA parsing depends on
+     * the SRV hostname and the related flags.
+     */
+    mdns_query_recv(
+            sock,
+            buffer,
+            sizeof(buffer),
+            adb__mdns_record_callback,
+            &result,
+            query_id);
+
+    if(result.have_ipv4 || result.have_ipv6)
+    {
+        if(result.have_ipv4)
+            memcpy(out, &result.sin, sizeof(result.sin));
+        else
+            memcpy(out, &result.sin6, sizeof(result.sin6));
+
+        ADB__INFO("found wireless device \"%s\" successfully", guid);
+        goto cleanup;
+    }
+
+    ADB__ERROR("failed to get the appropriate IP for \"%s\"",
+            result.hostname);
+
+cleanup:
+    mdns_socket_close(sock);
+    return ret;
+}
+
 adb_error_t adb_query_wireless(
         adb_ctx_t *ctx,
         adb_wireless_info_t ***infos,
@@ -406,8 +716,52 @@ adb_error_t adb_query_wireless(
     return ADB_ERR_UNSUPPORTED;
 }
 
-void adb__wireless_info_destroy(
+adb_error_t adb_query_wireless_with_guid(
+        adb_ctx_t *ctx,
+        const char *device_guid,
+        adb_wireless_info_t **out_info)
+{
+    adb_error_t res = ADB_ERR_OK;
+    adb_wireless_info_t *tmp = NULL;
+    if(!ctx || !device_guid || !out_info)
+        return ADB_ERR_PARAM;
+
+    tmp = adb__calloc(1, sizeof(*tmp));
+    if(!tmp)
+        return ADB_ERR_NO_MEM;
+
+    res = adb__query_wireless_with_guid_impl(
+            device_guid, &tmp->addr);
+    if(res != ADB_ERR_OK)
+    {
+        adb__free(tmp);
+        return res;
+    }
+
+    *out_info = tmp;
+    return ADB_ERR_OK;
+}
+
+adb_error_t adb_wireless_info_host(
+        adb_wireless_info_t *info,
+        char *out_buf,
+        const size_t size)
+{
+    if(!info || !out_buf || size == 0)
+        return ADB_ERR_PARAM;
+    return adb__sockaddr_get_host(&info->addr, out_buf, size); 
+}
+
+uint16_t adb_wireless_info_port(
         adb_wireless_info_t *info)
 {
-    (void)info;
+    return info ? adb__sockaddr_get_port(&info->addr) : 0;
+}
+
+void adb_wireless_info_destroy(
+        adb_wireless_info_t *info)
+{
+    if(!info)
+        return;
+    adb__free(info);
 }

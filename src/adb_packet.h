@@ -2,11 +2,14 @@
 #define ADB_MESSAGE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <adb/adb_error.h>
 
 #define ADB__CMD_ENCODE(a, b, c, d) ((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
 #define ADB__CMD_CNXN ADB__CMD_ENCODE('C', 'N', 'X', 'N')
 #define ADB__CMD_STLS ADB__CMD_ENCODE('S', 'T', 'L', 'S')
+
+#define ADB__PACKET_MAX_SUPPORTED_VER 0x01000001
 #define ADB__PACKET_MAX_PAYLOAD_SIZE (1024 * 1024)
 
 typedef struct adb_conn adb_conn_t;
@@ -28,5 +31,9 @@ adb_error_t adb__packet_read(
         adb_conn_t *conn,
         adb__packet_t *out_pkt,
         void **out_payload);
+
+bool adb__packet_check_cmd(
+        adb__packet_t *pkt,
+        const uint32_t expected);
 
 #endif

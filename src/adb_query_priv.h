@@ -2,6 +2,7 @@
 #define ADB_QUERY_PRIV_H
 
 #include <stdint.h>
+#include "adb_sock.h"
 
 typedef struct libusb_device libusb_device;
 typedef struct adb_wired_info
@@ -19,7 +20,10 @@ typedef struct adb_wired_info
     char serial[256];
 } adb_wired_info_t;
 
-typedef struct adb_wireless_info adb_wireless_info_t;
+typedef struct adb_wireless_info 
+{
+    struct sockaddr addr;
+} adb_wireless_info_t;
 
 void adb__wired_info_destroy(
         adb_wired_info_t *info);

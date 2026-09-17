@@ -105,18 +105,8 @@ void adb__log_err_adb(
     ADB__INFO("reason: %s", adb_strerror(err));
 }
 
-#define ADB__BYTES_PER_LINE 16
+#define ADB__HEX_BYTES_PER_LINE 16
 
-static inline void adb__log_flush(
-        const char *buffer, 
-        size_t *idx)
-{
-    if(!buffer || !idx)
-        return;
-
-    adb__log(ADB_LOG_DEBUG, "%.*s", (int)*idx, buffer);
-    *idx = 0;
-}
 
 void adb__log_multiline_text(
         const char *text,
@@ -124,57 +114,33 @@ void adb__log_multiline_text(
         ...)
 {
     va_list va;
-    char buffer[ADB__LOG_BUFFER_SIZE];
-    size_t idx = 0;
-
-    if(ADB_LOG_DEBUG < adb__log_level)
+    if (ADB_LOG_DEBUG < adb__log_level)
         return;
 
     va_start(va, fmt);
     adb__log_variadic(ADB_LOG_DEBUG, fmt, va);
     va_end(va);
 
-    for(; *text != '\0';)
+    const char *line_start = text;
+
+    while (*text != '\0')
     {
-        const char *escaped = NULL;
-        size_t len = 1;
-
-        switch(*text)
+        if (*text == '\r' || *text == '\n')
         {
-            case '\t':
-                escaped = "\\t";
-                len = 2;
-                break;
+            ADB__DEBUG("%.*s", (int)(text - line_start), line_start);
+            if (*text == '\r' && text[1] == '\n')
+                text += 2;
+            else
+                text++;
 
-            case '\r':
-                escaped = (text[1] == '\n') ? "\\r\\n" : "\\r";
-                len = strlen(escaped);
-                break;
-
-            case '\n':
-                escaped = "\\n";
-                len = 2;
-                break;
-
-            default:
-                if(idx == sizeof(buffer))
-                    adb__log_flush(buffer, &idx);
-
-                buffer[idx++] = *text++;
-                continue;
+            line_start = text;
         }
-
-        if(idx + len > sizeof(buffer))
-            adb__log_flush(buffer, &idx);
-
-        memcpy(buffer + idx, escaped, len);
-        idx += len;
-
-        adb__log_flush(buffer, &idx);
-        text += (text[0] == '\r' && text[1] == '\n') ? 2 : 1;
+        else
+            text++;
     }
 
-    adb__log_flush(buffer, &idx);
+    if (text != line_start)
+        ADB__DEBUG("%.*s", (int)(text - line_start), line_start);
 }
 
 void adb__log_payload(
@@ -191,7 +157,7 @@ void adb__log_payload(
         return;
 
     bytes = (const uint8_t*)data;
-    line_count = (size + (ADB__BYTES_PER_LINE - 1)) / ADB__BYTES_PER_LINE;
+    line_count = (size + (ADB__HEX_BYTES_PER_LINE - 1)) / ADB__HEX_BYTES_PER_LINE;
 
     va_start(va, fmt);
     adb__log_variadic(ADB_LOG_DEBUG, fmt, va);
@@ -199,8 +165,8 @@ void adb__log_payload(
 
     for(size_t i = 0; i < line_count; i++)
     {
-        size_t offset = i * ADB__BYTES_PER_LINE;
-        size_t line_size = ADB__MIN(size - offset, ADB__BYTES_PER_LINE);
+        size_t offset = i * ADB__HEX_BYTES_PER_LINE;
+        size_t line_size = ADB__MIN(size - offset, ADB__HEX_BYTES_PER_LINE);
         /*
          * 8  = offset
          * 2  = spaces after offset
@@ -208,8 +174,8 @@ void adb__log_payload(
          * 16 = ASCII representation
          * 1  = NUL terminator
          */
-        char buffer[8 + 2 + (ADB__BYTES_PER_LINE * 3)
-                       + ADB__BYTES_PER_LINE + 1] = {0};
+        char buffer[8 + 2 + (ADB__HEX_BYTES_PER_LINE * 3)
+                       + ADB__HEX_BYTES_PER_LINE + 1] = {0};
         size_t pos = 0;
 
         /* Offset */
@@ -220,7 +186,7 @@ void adb__log_payload(
             offset);
 
         /* Hex */
-        for(size_t j = 0; j < ADB__BYTES_PER_LINE; j++)
+        for(size_t j = 0; j < ADB__HEX_BYTES_PER_LINE; j++)
         {
             if(j < line_size)
             {
@@ -240,7 +206,7 @@ void adb__log_payload(
         }
 
         /* ASCII */
-        for(size_t j = 0; j < ADB__BYTES_PER_LINE; j++)
+        for(size_t j = 0; j < ADB__HEX_BYTES_PER_LINE; j++)
         {
             if(j < line_size)
             {

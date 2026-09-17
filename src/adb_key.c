@@ -447,7 +447,7 @@ adb_error_t adb_key_generate_pubkey(
     char hostname[HOST_NAME_MAX + 1] = {0};
     size_t min_size = 0;
     
-    if(!key || (!buffer ^ (size == 0)) || (!buffer & !out_size))
+    if(!key || (!buffer ^ (size == 0)) || (!buffer && !out_size))
         return ADB_ERR_PARAM;
 
     ADB__INFO("generating public key from private key");

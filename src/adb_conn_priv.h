@@ -21,12 +21,6 @@ adb_error_t adb__conn_upgrade_tls(
         adb_conn_t *conn,
         adb_key_t *key);
 
-uint32_t adb__conn_get_max_payload_size(
-        adb_conn_t *conn);
-
-adb__tls_t *adb__conn_get_tls(
-        adb_conn_t *conn);
-
 adb_error_t adb__conn_read(
         adb_conn_t *conn,
         void *buf,
@@ -36,5 +30,15 @@ adb_error_t adb__conn_write(
         adb_conn_t *conn,
         const void *buf,
         const size_t size);
+
+uint32_t adb__conn_get_max_payload_size(
+        adb_conn_t *conn);
+
+adb__tls_t *adb__conn_get_tls(
+        adb_conn_t *conn);
+
+adb_ctx_t *adb__conn_get_ctx(
+        adb_conn_t *conn);
+
 
 #endif

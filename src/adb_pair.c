@@ -16,9 +16,6 @@
 #include "adb_ctx_priv.h"
 #include "adb_alloc_priv.h"
 #include "adb_aes.h"
-#include "adb_mdns.h"
-
-#define ADB__ENUM_KEY_VALUE(val) [(val)] = #val 
 
 #define ADB__PAIR_CODE_DIGITS       6
 #define ADB__PAIR_HEADER_VER        1
@@ -67,12 +64,11 @@ static const char *adb__peer_info_type_strings[ADB__PAIR_PACKET_COUNT] =
 };
 
 static inline bool adb__verify_pairing_code(
-        const char *code,
-        const size_t code_len)
+        const char *code)
 {
-    if(!code && code_len != ADB__PAIR_CODE_DIGITS)
+    if(!code && strlen(code) != ADB__PAIR_CODE_DIGITS)
         return false;
-    for(size_t i = 0; i < code_len; i++)
+    for(size_t i = 0; i < ADB__PAIR_CODE_DIGITS; i++)
     {
         if(!isdigit(code[i]))
             return false;
@@ -250,7 +246,6 @@ static bool adb__pair_check_packet(
 
 static adb_error_t adb__exchange_message(
         adb_conn_t *conn,
-        adb_ctx_t *ctx,
         const char *code,
         uint8_t out_key_material[SPAKE2_MAX_KEY_LENGTH],
         size_t *out_key_material_len)
@@ -280,7 +275,7 @@ static adb_error_t adb__exchange_message(
         return ret;
     
     err = mbedtls_ctr_drbg_random(
-            &ctx->drbg,
+            &adb__conn_get_ctx(conn)->drbg,
             random_data,
             sizeof(random_data));
     if(err != 0)
@@ -478,41 +473,35 @@ cleanup:
     return ret;
 }
 
-
 adb_error_t adb_pair(
-        adb_ctx_t *ctx,
-        const char *host,
-        const uint16_t port,
+        adb_conn_t *conn,
         const char *code,
-        const size_t code_len,
-        adb_key_t *key)
+        adb_key_t *key,
+        char *out_guid,
+        const size_t out_guid_len)
 {
     adb_error_t ret = ADB_ERR_OK;
-    adb_conn_t *conn = NULL;
 
     uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
     size_t key_material_len = 0;
     char device_guid[ADB__MEMSZ(adb__peer_info_t, data)] = {0};
-    //struct sockaddr addr = {0};
+    size_t guid_len = 0;
 
-    if(!ctx || !adb__verify_pairing_code(code, code_len))
+    if(!conn || !adb__verify_pairing_code(code) || 
+            (!out_guid ^ (out_guid_len == 0)))
         return ADB_ERR_PARAM;
 
     ADB__INFO("pairing wireless device with code \"%6s\"", code);
-    ret = adb_conn_create_wireless(&conn, ctx, host, port);
-    if(ret != ADB_ERR_OK)
-        return ret;
-   
     ret = adb__conn_upgrade_tls(conn, key);
     if(ret != ADB_ERR_OK)
-        goto cleanup;
+        return ret;
 
     ret = adb__exchange_message(
-            conn, ctx, code, 
+            conn, code, 
             key_material, 
             &key_material_len);
     if(ret != ADB_ERR_OK)
-        goto cleanup;
+        return ret;
 
     ret = adb__exchange_info(
             conn, 
@@ -521,23 +510,17 @@ adb_error_t adb_pair(
             key,
             device_guid);
     if(ret != ADB_ERR_OK)
-        goto cleanup;
+        return ret;
 
-    /*
-    adb__mdns_find_service(device_guid, &addr);
-    if(addr.sa_family != AF_UNSPEC)
+    guid_len = strlen(device_guid) + 1;
+    if(out_guid)
     {
-        adb_conn_t *conn2 = NULL;
-        adb__conn_from_sockaddr(&conn2, ctx, &addr);
-        adb_conn_handshake(conn2, key);
-        adb_conn_destroy(conn2);
-
+        if(out_guid_len < guid_len)
+            ret = ADB_ERR_TOO_SMALL;
+        else
+            memcpy(out_guid, device_guid, guid_len);
     }
-    */
 
     ADB__INFO("pairing wireless device successfully");
-
-cleanup:
-    adb_conn_destroy(conn);
-    return ret;
+    return ADB_ERR_OK;
 }
