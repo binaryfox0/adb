@@ -283,7 +283,10 @@ adb_error_t adb__tls_write(
         }
 
         if(tls->bio_error != ADB_ERR_OK)
+        {
+            adb__log_err_adb(tls->bio_error, "TLS write failed");
             return tls->bio_error;
+        }
         
         adb__log_err_mbedtls(ret, "TLS write failed");
 

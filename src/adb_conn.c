@@ -26,6 +26,8 @@
 #include "adb_transport_tcp.h"
 #include "adb_transport_custom.h"
 
+#define ADB__PATH_MAX 4096
+
 typedef enum
 {
     ADB__CONN_STATE_BOOTLOADER,
@@ -232,10 +234,6 @@ adb_error_t adb__conn_upgrade_tls(
     return ADB_ERR_OK;
 }
 
-#define ADB__STLS_VERSION 0x01000000
-#define ADB__STLS_MIN_VERSION 0x01000000
-
-
 static bool adb__parse_banner(
         adb_conn_t *conn,
         const uint8_t *banner,
@@ -339,57 +337,71 @@ fail:
     return false;
 }
 
-static adb_error_t adb__conn_handle_stls(
+adb_error_t adb_handshake(
         adb_conn_t *conn, 
         adb_key_t *key)
 {
-    static const adb__packet_t pkt = 
-    {
-        .command = ADB__CMD_STLS,
-        .arg0 = ADB__STLS_VERSION,
-        .arg1 = 0,
-        .payload_size = 0,
-    };
-
-    adb_error_t ret = adb__packet_write(conn, &pkt, NULL);
-    if (ret != ADB_ERR_OK)
-        return ret;
-
-    return adb__conn_upgrade_tls(conn, key);
-}
-
-adb_error_t adb_conn_handshake(
-        adb_conn_t *conn, 
-        adb_key_t *key)
-{
+    adb_error_t ret = ADB_ERR_OK;
     static const char conn_str[] = "host::";
-    adb__packet_t pkt = 
-    {
-        .command = ADB__CMD_CNXN,
-        .arg0 = ADB__PACKET_MAX_SUPPORTED_VER,
-        .arg1 = ADB__PACKET_MAX_PAYLOAD_SIZE,
-        .payload_size = sizeof(conn_str) - 1,
-    };
-
+    adb__packet_t pkt = {0};
     uint8_t *payload = NULL;
-    adb_error_t ret;
-
+    
     if (!conn || !key)
         return ADB_ERR_PARAM;
+    
+    pkt.command = ADB__CMD_CNXN;
+    pkt.arg0 = ADB__PACKET_MAX_SUPPORTED_VER;
+    pkt.arg1 = ADB__PACKET_MAX_PAYLOAD_SIZE;
+    pkt.payload_size = sizeof(conn_str) - 1;
+
 
     if(
-            (ret = adb__packet_write(conn, &pkt, conn_str)) != ADB_ERR_OK ||
+            (ret = adb__packet_write(conn, &pkt, 
+                                     conn_str)) != ADB_ERR_OK ||
             (ret = adb__packet_read(conn, &pkt, 
                                     (void **)&payload) != ADB_ERR_OK))
         return ret;
 
     if (pkt.command == ADB__CMD_STLS) 
     {
-        ret = adb__conn_handle_stls(conn, key);
+        pkt.command = ADB__CMD_STLS;
+        pkt.arg0 = ADB__STLS_VERSION;
+        pkt.arg1 = 0;
+        pkt.payload_size = 0;
+    
+        ret = adb__packet_write(conn, &pkt, NULL);
+        if (ret != ADB_ERR_OK)
+            goto fail;
+
+        ret = adb__conn_upgrade_tls(conn, key);
         if (ret != ADB_ERR_OK)
             goto fail;
 
         adb__free(payload); payload = NULL;
+        ret = adb__packet_read(conn, &pkt, (void **)&payload);
+        if (ret != ADB_ERR_OK)
+            goto fail;
+    } else if(pkt.command == ADB__CMD_AUTH) {
+        /*
+         * A valid adb_key_t always has a valid private key object,
+         * so the implementation for ADB__AUTH_PUBLIC_KEY will render
+         * useless.
+         */
+        uint8_t signature[ADB__KEY_SIGNATURE_LENGTH] = {0};
+        pkt.command = ADB__CMD_AUTH;
+        pkt.arg0 = ADB__AUTH_SIGNATURE;
+        pkt.arg1 = 0;
+        ret = adb__key_sign(key, conn->ctx, 
+                (const char*)payload, pkt.payload_size, 
+                signature);
+        if(ret != ADB_ERR_OK)
+            goto fail;
+        pkt.payload_size = sizeof(signature);
+       
+        ret = adb__packet_write(conn, &pkt, signature);
+        if (ret != ADB_ERR_OK)
+            goto fail;
+        
         ret = adb__packet_read(conn, &pkt, (void **)&payload);
         if (ret != ADB_ERR_OK)
             goto fail;
@@ -410,6 +422,134 @@ fail:
     adb__free(payload);
     return ret;
 }
+
+#define ADB__SYNC_ID_RECV_V2 ADB__CMD_ENCODE('R', 'C', 'V', '2')
+#define ADB__SYNC_ID_DONE ADB__CMD_ENCODE('D', 'O', 'N', 'E')
+#define ADB__SYNC_ID_DATA ADB__CMD_ENCODE('D', 'A', 'T', 'A')
+
+#define ADB__SYNC_DATA_MAX (64 * 1024)
+
+typedef struct __attribute__((packed)) 
+{
+    uint32_t id;
+    uint32_t path_len;
+    /* followed by `path_length` bytes of non-null terminated path */
+} adb__sync_request_t;
+
+typedef struct __attribute__((packed)) 
+{
+    uint32_t id;
+    uint32_t flags;
+} adb__sync_recv_v2_t;
+
+typedef struct __attribute__((packed))
+{
+    uint32_t id;
+    uint32_t size;
+    /* followed by `size` bytes of data. */
+} adb__sync_data_t;
+
+typedef struct __attribute__((packed))
+{
+    uint32_t id;
+    uint32_t error;
+    uint64_t dev;
+    uint64_t ino;
+    uint32_t mode;
+    uint32_t nlink;
+    uint32_t uid;
+    uint32_t gid;
+    uint64_t size;
+    int64_t atime;
+    int64_t mtime;
+    int64_t ctime;
+    uint32_t namelen;
+    /* followed by `namelen` bytes of name */
+} adb__sync_dent_v2_t;
+
+adb_error_t adb_pull(
+        adb_conn_t *conn,
+        const char *path,
+        const adb_conn_write_fn write_fn)
+{
+    adb_error_t ret = ADB_ERR_OK;
+    size_t path_len = 0;
+    size_t size = 0;
+    uint32_t local_id = 0;
+    uint32_t remote_id = 0;
+    adb__packet_t pkt = {0};
+    adb__sync_request_t req = {0};
+    adb__sync_recv_v2_t msg = {0};
+
+    uint8_t buffer[sizeof(req) + ADB__PATH_MAX + sizeof(msg)] = {0};
+
+    path_len = strlen(path);
+    size = sizeof(req) + path_len + sizeof(msg);
+    if(path_len > ADB__PATH_MAX)
+        return ADB_ERR_PARAM;
+
+    local_id = 1;
+
+    pkt.command = ADB__CMD_OPEN;
+    pkt.arg0 = local_id;
+    pkt.arg1 = 0;
+    /* TODO: implement delayed ACK */
+    /* null byte for compatibility */
+    pkt.payload_size = sizeof("sync:");
+
+    ret = adb__packet_write(conn, &pkt, "sync:");
+    if(ret != ADB_ERR_OK)
+        return ret;
+
+    ret = adb__packet_read_into(conn, &pkt, NULL, 0);
+    if(ret != ADB_ERR_OK)
+        return ret;
+
+    remote_id = pkt.arg0;
+
+    req.id = ADB__SYNC_ID_RECV_V2;
+    req.path_len = (uint32_t)path_len;
+    msg.id = ADB__SYNC_ID_RECV_V2;
+
+    memcpy(buffer, &req, sizeof(req));
+    memcpy(buffer + sizeof(req), path, path_len);
+    memcpy(buffer + sizeof(req) + path_len, &msg, sizeof(msg));
+
+    pkt.command = ADB__CMD_WRTE;
+    pkt.arg0 = local_id;
+    pkt.arg1 = remote_id;
+    pkt.payload_size = (uint32_t)size;
+
+    ret = adb__packet_write(conn, &pkt, buffer);
+    if(ret != ADB_ERR_OK)
+        return ret;
+
+    for(;;)
+    {
+        adb__sync_data_t data = {0};
+        ret = adb__conn_read(conn, &data, sizeof(data));
+
+        if(data.id == ADB__SYNC_ID_DONE)
+            break;
+        else if(data.id == ADB__SYNC_ID_DATA)
+        {
+            uint8_t data_data[ADB__SYNC_DATA_MAX] = {0};
+            ret = adb__conn_read(conn, data_data, data.size);
+
+            pkt.command = ADB__CMD_OKAY;
+            pkt.arg0 = local_id;
+            pkt.arg1 = remote_id;
+            pkt.payload_size = 0;
+
+            adb__packet_write(conn, &pkt, NULL);
+        }
+    }
+
+
+    (void)write_fn;
+    return ADB_ERR_OK;
+}
+
 
 void adb_conn_destroy(
         adb_conn_t *conn)
@@ -450,6 +590,26 @@ adb_error_t adb__conn_read(
     return res;
 }
 
+adb_error_t adb__conn_read_alloc(
+        adb_conn_t *conn,
+        void **out,
+        const size_t size)
+{
+    adb_error_t ret = ADB_ERR_OK;
+    uint8_t *buf = NULL;
+
+    buf = adb__malloc(size);
+    if(!buf)
+        return ADB_ERR_NO_MEM;
+
+    ret = adb__conn_read(conn, buf, size);
+    if(ret != ADB_ERR_OK)
+        adb__free(buf);
+    else
+        *out = buf;
+
+    return ret;
+}
 
 adb_error_t adb__conn_write(
         adb_conn_t *conn,

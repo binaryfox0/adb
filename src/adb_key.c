@@ -29,15 +29,15 @@
 
 #define ADB__CERT_LIFETIME (10 * 365 * 24 * 60 * 60)
 
-#define ADB__RSA_MODULUS_BITS   2048
 #define ADB__RSA_ALGORITHM      "RSA-" ADB__STRINGIFY(ADB__RSA_MODULUS_BITS)
 #define ADB__RSA_EXPONENT       65537
 #define ADB__RSA_MODULUS_SIZE   (ADB__RSA_MODULUS_BITS / 8)
 #define ADB__RSA_MODULUS_WORDS  (ADB__RSA_MODULUS_SIZE / 4)
 #define ADB__ANDROID_PUBKEY_SIZE    \
     (3 * sizeof(uint32_t) + 2 * ADB__RSA_MODULUS_SIZE)  
-#define ADB__BASE64_SIZE(n) (4 * (((n) + 2) / 3))
-#define ADB__RSA2048_DER_MAX 2048
+#define ADB__BASE64_SIZE(n)     (4 * (((n) + 2) / 3))
+#define ADB__RSA2048_DER_MAX    2048
+#define ADB__TOKEN_SIZE     20
   
 typedef struct
 {  
@@ -718,4 +718,34 @@ fail:
     mbedtls_mpi_free(&serial);
     mbedtls_x509write_crt_free(&writer);
     return false;
+}
+
+adb_error_t adb__key_sign(
+        adb_key_t *key,
+        adb_ctx_t *ctx,
+        const char *token,
+        const size_t token_size,
+        uint8_t *out_sig)
+{
+    int err = 0;
+    if(!key || !ctx || !token || token_size == 0)
+        return ADB_ERR_PARAM;
+    if(token_size != ADB__TOKEN_SIZE)
+        return ADB_ERR_PROTOCOL;
+
+    err = mbedtls_rsa_rsassa_pkcs1_v15_sign(
+            mbedtls_pk_rsa(key->pk),
+            mbedtls_ctr_drbg_random,
+            &ctx->drbg,
+            MBEDTLS_MD_SHA1,
+            (uint32_t)token_size,
+            (const uint8_t*)token,
+            out_sig);
+    if(err != 0)
+    {
+        adb__log_err_mbedtls(err, "failed to sign token");
+        return ADB_ERR_CRYPTO;
+    }
+
+    return ADB_ERR_OK;
 }

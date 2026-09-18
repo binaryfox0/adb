@@ -88,7 +88,8 @@ static void adb__log_pair_packet(
 static adb_error_t adb__pair_read_packet(
         adb_conn_t *conn,
         adb__pair_packet_t *out_pkt,
-        void **out_payload)
+        void *out_payload,
+        const size_t size)
 {
     static const size_t version_offset =
         offsetof(adb__pair_packet_t, version);
@@ -100,8 +101,7 @@ static adb_error_t adb__pair_read_packet(
     adb_error_t res = ADB_ERR_OK;
     uint8_t version = 0;
     uint8_t type = 0;
-    uint32_t size = 0;
-    void *tmp_payload = NULL;
+    uint32_t dec_size = 0;
 
     if(!conn || !out_pkt)
         return ADB_ERR_PARAM;
@@ -136,25 +136,28 @@ static adb_error_t adb__pair_read_packet(
         return ADB_ERR_UNSUPPORTED;
     }
 
-    size = 
+    dec_size = 
         (uint32_t)(buffer[plsz_offset] << 24) |
         (uint32_t)(buffer[plsz_offset + 1] << 16) |
         (uint32_t)(buffer[plsz_offset + 2] << 8) |
         (uint32_t)buffer[plsz_offset + 3];
 
-    if(!ADB__IN_RANGE(size, 1, ADB__PAIR_MAX_PAYLOAD_SIZE))
+    if(!ADB__IN_RANGE(dec_size, 1, ADB__PAIR_MAX_PAYLOAD_SIZE))
     {
         ADB__ERROR("pairing payload size not within a safe range");
         ADB__INFO("safe range: [%d, %d], got: %u bytes",
-                1, ADB__PAIR_MAX_PAYLOAD_SIZE, size);
+                1, ADB__PAIR_MAX_PAYLOAD_SIZE, dec_size);
         return ADB_ERR_PROTOCOL;
     }
 
-    tmp_payload = adb__malloc(size);
-    if(!tmp_payload)
-        return ADB_ERR_NO_MEM;
+    if(dec_size > size)
+    {
+        ADB__ERROR("pairing payload size is not within requested size");
+        ADB__INFO("max size: %zu bytes, got: %u bytes", size, dec_size);
+        return ADB_ERR_PROTOCOL;
+    }
 
-    res = adb__conn_read(conn, tmp_payload, size);
+    res = adb__conn_read(conn, out_payload, dec_size);
     if(res != ADB_ERR_OK)
     {
         adb__log_err_adb(res, "failed to read pairing payload");
@@ -163,8 +166,7 @@ static adb_error_t adb__pair_read_packet(
 
     out_pkt->version = version;
     out_pkt->type = type;
-    out_pkt->size = size;
-    *out_payload = tmp_payload;
+    out_pkt->size = dec_size;
 
     ADB__INFO("read pairing packet sucessfully");
     adb__log_pair_packet(out_pkt);
@@ -216,10 +218,9 @@ static adb_error_t adb__pair_write_packet(
     return ADB_ERR_OK;
 }
 
-static bool adb__pair_check_packet(
+static inline bool adb__pair_check_packet(
         adb__pair_packet_t *pkt,
-        const adb__pair_packet_type_t type,
-        const uint32_t size)
+        const adb__pair_packet_type_t type)
 {
     if(!pkt)
         return false;
@@ -233,14 +234,6 @@ static bool adb__pair_check_packet(
         return false;
     }
     
-    if(pkt->size != size)
-    {
-        ADB__ERROR("unexpected pairing payload size");
-        ADB__INFO("expected: %u bytes, got %u bytes",
-                size, pkt->size);
-        return false;
-    }
-
     return true;
 }
 
@@ -263,7 +256,7 @@ static adb_error_t adb__exchange_message(
     size_t my_msg_size = 0;
     
     adb__pair_packet_t pkt = {0};
-    uint8_t *their_msg = NULL;
+    uint8_t their_msg[SPAKE2_MAX_MESSAGE_LENGTH] = {0};
 
     ADB__INFO("exchanging SPAKE2 message with the device");
 
@@ -326,11 +319,11 @@ static adb_error_t adb__exchange_message(
     if(ret != ADB_ERR_OK)
         goto cleanup;
 
-    ret = adb__pair_read_packet(conn, &pkt, (void**)&their_msg);
+    ret = adb__pair_read_packet(conn, &pkt, 
+            their_msg, sizeof(their_msg));
     if(ret != ADB_ERR_OK)
         goto cleanup;
-    if(!adb__pair_check_packet(&pkt, ADB__PAIR_PACKET_SPAKE2, 
-                SPAKE2_MAX_MESSAGE_LENGTH))
+    if(!adb__pair_check_packet(&pkt, ADB__PAIR_PACKET_SPAKE2))
     {
         ret = ADB_ERR_PROTOCOL;
         goto cleanup;
@@ -370,7 +363,8 @@ static adb_error_t adb__exchange_info(
     adb__peer_info_t my_info = {0};
     uint8_t enc_my_info[ADB__AES_ENCYPTED_SIZE(sizeof(my_info))] = {0};
     adb__pair_packet_t pkt = {0};
-    uint8_t *enc_their_info = NULL;
+    
+    uint8_t enc_their_info[ADB__AES_ENCYPTED_SIZE(sizeof(my_info))] = {0};
     adb__peer_info_t their_info = {0};
     bool has_null = false;
 
@@ -406,11 +400,10 @@ static adb_error_t adb__exchange_info(
         goto cleanup; 
    
     ret = adb__pair_read_packet(conn, &pkt, 
-            (void**)&enc_their_info);
+            enc_their_info, sizeof(enc_their_info));
     if(ret != ADB_ERR_OK)
         goto cleanup; 
-    if(!adb__pair_check_packet(&pkt, ADB__PAIR_PACKET_PEER_INFO, 
-                ADB__AES_ENCYPTED_SIZE(sizeof(their_info))))
+    if(!adb__pair_check_packet(&pkt, ADB__PAIR_PACKET_PEER_INFO))
     {
         ret = ADB_ERR_PROTOCOL;
         goto cleanup;

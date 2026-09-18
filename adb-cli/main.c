@@ -271,8 +271,9 @@ static void connect_command(
                 key_path);
         goto cleanup;
     }
-    CHECK(adb_conn_handshake(conn, key), 
+    CHECK(adb_handshake(conn, key), 
             err, cleanup, "failed to perform handshake with %s", ip);
+    adb_pull(conn, "/storage/emulated/0/Download/Shake Na Baby.webm", NULL);
 
 cleanup:
     adb_key_destroy(key);

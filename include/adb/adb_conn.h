@@ -48,9 +48,14 @@ adb_error_t adb_conn_create_custom(
         const adb_conn_profile_t profile);
 
 
-adb_error_t adb_conn_handshake(
+adb_error_t adb_handshake(
         adb_conn_t *conn,
         adb_key_t *key);
+
+adb_error_t adb_pull(
+        adb_conn_t *conn,
+        const char *path,
+        const adb_conn_write_fn write_fn);
 
 void adb_conn_destroy(
         adb_conn_t *conn);

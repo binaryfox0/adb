@@ -26,6 +26,11 @@ adb_error_t adb__conn_read(
         void *buf,
         const size_t size);
 
+adb_error_t adb__conn_read_alloc(
+        adb_conn_t *conn,
+        void **out,
+        const size_t size);
+
 adb_error_t adb__conn_write(
         adb_conn_t *conn,
         const void *buf,
