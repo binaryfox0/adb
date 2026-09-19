@@ -232,6 +232,14 @@ cleanup:
     adb_ctx_destroy(ctx);
 }
 
+static int write_fn(
+        void *userdata,
+        const uint8_t *buf,
+        size_t size)
+{
+    return (int)fwrite(buf, 1, size, userdata);
+}
+
 static void connect_command(
         const aparse_arg *args,
         void *param)
@@ -273,7 +281,10 @@ static void connect_command(
     }
     CHECK(adb_handshake(conn, key), 
             err, cleanup, "failed to perform handshake with %s", ip);
-    adb_pull(conn, "/storage/emulated/0/Download/Shake Na Baby.webm", NULL);
+    FILE *file = fopen("./Shake Na Baby.webm", "wb");
+    adb_pull(conn, "/storage/emulated/0/Download/Shake Na Baby.webm", 
+            write_fn, file);
+    fclose(file);
 
 cleanup:
     adb_key_destroy(key);

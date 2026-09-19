@@ -15,6 +15,7 @@
 #define ADB__CMD_OPEN ADB__CMD_ENCODE('O', 'P', 'E', 'N')
 #define ADB__CMD_WRTE ADB__CMD_ENCODE('W', 'R', 'T', 'E')
 #define ADB__CMD_OKAY ADB__CMD_ENCODE('O', 'K', 'A', 'Y')
+#define ADB__CMD_CLSE ADB__CMD_ENCODE('C', 'L', 'S', 'E')
 
 #define ADB__STLS_VERSION       0x01000000
 #define ADB__STLS_MIN_VERSION   0x01000000
@@ -41,16 +42,22 @@ adb_error_t adb__packet_write(
         const adb__packet_t *pkt,
         const void *payload);
 
+/*
+ * Read a packet and allocate a buffer to store the payload
+ */
 adb_error_t adb__packet_read(
         adb_conn_t *conn,
         adb__packet_t *out_pkt,
         void **out_payload);
 
+/*
+ * Read a packet and store into an existing buffer
+ */
 adb_error_t adb__packet_read_into(
         adb_conn_t *conn,
         adb__packet_t *out_pkt,
         void *out_payload,
-        const size_t size);
+        const size_t max_size);
 
 bool adb__packet_check_cmd(
         adb__packet_t *pkt,

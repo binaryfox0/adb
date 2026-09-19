@@ -150,7 +150,7 @@ adb_error_t adb__packet_read_into(
         adb_conn_t *conn,
         adb__packet_t *out_pkt,
         void *out_payload,
-        const size_t size)
+        const size_t max_size)
 {
     adb_error_t res = ADB_ERR_OK;
     adb__packet_serialized_t spkt = {0};
@@ -179,11 +179,11 @@ adb_error_t adb__packet_read_into(
 
     if(spkt.payload_size == 0)
         goto success;
-    if(spkt.payload_size > size)
+    if(spkt.payload_size > max_size)
     {
         ADB__ERROR("payload size exceeds maximum requested size");
         ADB__INFO("max size: %zu bytes, got: %u bytes",
-                size, spkt.payload_size);
+                max_size, spkt.payload_size);
         return ADB_ERR_PROTOCOL;
     }
 

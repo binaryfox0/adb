@@ -55,7 +55,8 @@ adb_error_t adb_handshake(
 adb_error_t adb_pull(
         adb_conn_t *conn,
         const char *path,
-        const adb_conn_write_fn write_fn);
+        const adb_conn_write_fn write_fn,
+        void *userdata);
 
 void adb_conn_destroy(
         adb_conn_t *conn);
