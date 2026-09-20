@@ -60,7 +60,10 @@ adb_error_t adb__packet_read_into(
         const size_t max_size);
 
 bool adb__packet_check_cmd(
-        adb__packet_t *pkt,
+        const adb__packet_t *pkt,
         const uint32_t expected);
 
+bool adb__packet_check_size(
+        const adb__packet_t *pkt,
+        const uint32_t size);
 #endif

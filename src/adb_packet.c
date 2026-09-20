@@ -207,7 +207,7 @@ success:
 }
 
 bool adb__packet_check_cmd(
-        adb__packet_t *pkt,
+        const adb__packet_t *pkt,
         const uint32_t expected)
 {
     bool ret = false;
@@ -221,6 +221,24 @@ bool adb__packet_check_cmd(
         ADB__INFO("expected: 0x%08X (%.4s), got: 0x%08X (%.4s)",
                 expected, (const char*)&expected,
                 pkt->command, (const char*)&pkt->command);
+    }
+    return ret;
+}
+
+bool adb__packet_check_size(
+        const adb__packet_t *pkt,
+        const uint32_t size)
+{
+    bool ret = false;
+    if(!pkt)
+        return false;
+    
+    ret = pkt->payload_size == size;
+    if(!ret)
+    {
+        ADB__ERROR("unexpected packet payload size");
+        ADB__INFO("expected: %u bytes, got: %u bytes",
+                size, pkt->payload_size);
     }
     return ret;
 }
