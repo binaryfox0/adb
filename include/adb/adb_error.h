@@ -1,7 +1,7 @@
 #ifndef ADB_ERROR_H
 #define ADB_ERROR_H
 
-#define ADB_CALLBACK_ERR(err) (-(err))
+#define ADB_FUNC_ERR(err) ((int)-(err))
 
 typedef enum
 {
@@ -18,6 +18,7 @@ typedef enum
     ADB_ERR_PROTOCOL,
     ADB_ERR_CRYPTO,
     ADB_ERR_TOO_SMALL,
+    ADB_ERR_COMPRESS,
     ADB__ERR_COUNT
 } adb_error_t;
 

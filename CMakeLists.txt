@@ -68,9 +68,13 @@ function(target_add_asan target)
 endfunction()
 
 find_package(MbedTLS REQUIRED)
+find_package(lz4 REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(libusb libusb-1.0 REQUIRED IMPORTED_TARGET)
+pkg_check_modules(lz4 liblz4 REQUIRED IMPORTED_TARGET)
+pkg_check_modules(zstd libzstd REQUIRED IMPORTED_TARGET)
+pkg_check_modules(brotlidec libbrotlidec REQUIRED IMPORTED_TARGET)
 
 add_subdirectory(deps/mdns)
 add_subdirectory(spake2)
@@ -93,7 +97,11 @@ add_library(adb
     src/adb_packet.c
     src/adb_sock.c
     src/adb_pair.c
+    src/adb_decomp.c
     src/adb_conn.c)
+target_compile_definitions(adb PRIVATE
+    ZSTD_STATIC_LINKING_ONLY
+    LZ4F_STATIC_LINKING_ONLY)
 target_include_directories(adb PUBLIC include/)
 target_link_libraries(adb PRIVATE 
     PkgConfig::libusb
@@ -101,7 +109,10 @@ target_link_libraries(adb PRIVATE
     MbedTLS::mbedx509
     MbedTLS::mbedcrypto
     spake2
-    mdns)
+    mdns
+    PkgConfig::lz4
+    PkgConfig::zstd
+    PkgConfig::brotlidec)
 target_add_strict_flags(adb)
 target_add_asan(adb)
 

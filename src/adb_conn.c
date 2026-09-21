@@ -21,14 +21,18 @@
 #include "adb_transport.h"
 #include "adb_tls.h"
 #include "adb_str.h"
+#include "adb_decomp.h"
 
 #include "adb_transport_usb.h"
 #include "adb_transport_tcp.h"
 #include "adb_transport_custom.h"
 
-#define ADB__PATH_MAX 4096
-#define ADB__FEATURE_SENDRECV_V2 "sendrecv_v2"
-#define ADB__FEATURE_DELAYED_ACK "delayed_ack"
+#define ADB__PATH_MAX                   4096
+#define ADB__FEATURE_SENDRECV_V2        "sendrecv_v2"
+#define ADB__FEATURE_SENDRECV_V2_BROTLI "sendrecv_v2_brotli"
+#define ADB__FEATURE_SENDRECV_V2_LZ4    "sendrecv_v2_lz4"
+#define ADB__FEATURE_SENDRECV_V2_ZSTD   "sendrecv_v2_zstd"
+#define ADB__FEATURE_DELAYED_ACK        "delayed_ack"
 
 typedef enum
 {
@@ -187,8 +191,8 @@ adb_error_t adb_conn_create_wireless(
 adb_error_t adb_conn_create_custom(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
-        const adb_conn_read_fn read_cb,
-        const adb_conn_write_fn write_cb,
+        const adb_read_fn read_cb,
+        const adb_write_fn write_cb,
         void *userdata,
         const adb_conn_profile_t profile)
 {
@@ -491,15 +495,33 @@ typedef struct __attribute__((packed))
     /* followed by `namelen` bytes of name */
 } adb__sync_dent_v2_t;
 
+typedef enum 
+{
+    ADB__SYNC_FLAG_NONE = 0,
+    ADB__SYNC_FLAG_BROTLI = (1 << 0),
+    ADB__SYNC_FLAG_LZ4 = (1 << 1),
+    ADB__SYNC_FLAG_ZSTD = (1 << 2)
+} adb__sync_flag_t;
+
 /* docs later: sync data header and payload can be spread across WRTN */
-adb_error_t adb_pull(
+static adb_error_t adb__pull_impl(
         adb_conn_t *conn,
         const char *path,
-        const adb_conn_write_fn write_fn,
+        const adb__decomp_type_t decomp_type,
+        const adb_write_fn write_fn,
         void *userdata)
 {
+    static uint32_t decomp_type_to_flags[ADB__DECOMP_COUNT] =
+    {
+        [ADB__DECOMP_NONE] = 0,
+        [ADB__DECOMP_BROTLI] = ADB__SYNC_FLAG_BROTLI,
+        [ADB__DECOMP_LZ4] = ADB__SYNC_FLAG_LZ4,
+        [ADB__DECOMP_ZSTD] = ADB__SYNC_FLAG_ZSTD,
+    };
+
     adb_error_t ret = ADB_ERR_OK;
     adb_error_t ret2 = ADB_ERR_OK;
+
     size_t path_len = 0;
     size_t req_size = 0;
 
@@ -507,49 +529,46 @@ adb_error_t adb_pull(
     uint32_t remote_id = 0;
 
     bool delayed_ack = false;
+    bool data_done = false;
+    bool ack_received = false;
 
     adb__packet_t pkt = {0};
+    uint8_t *pkt_payload = NULL;
     int32_t initial_asb = 0;
-
+    int32_t asb = 0;
     adb__sync_request_t req = {0};
     adb__sync_recv_v2_t msg = {0};
-    uint8_t req_payload[
-            sizeof(req) + 
-            ADB__PATH_MAX + 
-            sizeof(msg)] = {0};
-    void *p = NULL;
-    uint8_t *pkt_payload = NULL;
 
+    uint8_t req_payload[
+            sizeof(req) +
+            ADB__PATH_MAX +
+            sizeof(msg)] = {0};
+    uint8_t *req_cursor = NULL;
+
+    adb__decomp_t *decomp = NULL;
     /* vars to track header and data across WRTE */
     size_t data_remaining = 0;
     size_t header_written = 0;
     adb__sync_data_t header = {0};
-    bool data_done = false;
-    bool ack_recieved = false;
-    /* 
-     * available send bytes, the amount of bytes that peer
-     * willing to accept before sending OKAY
-     */
-    int32_t asb = 0;
-
-    if(!conn || !path || !write_fn)
-        return ADB_ERR_PARAM;
-    if(!adb__has_feature(conn, ADB__FEATURE_SENDRECV_V2))
-        return ADB_ERR_UNSUPPORTED;
 
     ADB__INFO("pulling file from device at \"%s\"", path);
 
     path_len = strlen(path);
     if(path_len > ADB__PATH_MAX)
         return ADB_ERR_PARAM;
-    req_size = sizeof(req) + path_len + sizeof(msg);
 
+    req_size = sizeof(req) + path_len + sizeof(msg);
     local_id = 1;
     delayed_ack = adb__has_feature(conn, ADB__FEATURE_DELAYED_ACK);
 
+    /*
+     * OPEN(local-id, [send-buffer], "destination")
+     * The send-buffer value advertises delayed-ACK support.
+     */
     pkt.command = ADB__CMD_OPEN;
     pkt.arg0 = local_id;
     pkt.arg1 = delayed_ack ? ADB__INIT_DELAYED_ACK_BYTES : 0;
+
     /* null byte for compatibility */
     pkt.payload_size = sizeof("sync:");
 
@@ -560,11 +579,18 @@ adb_error_t adb_pull(
         return ret;
     }
 
-    ret = adb__packet_read_into(conn, &pkt, 
-            &initial_asb, 
+    /*
+     * The first OKAY establishes the remote stream ID.
+     * With delayed ACK enabled, its payload contains the initial ASB.
+     */
+    ret = adb__packet_read_into(
+            conn,
+            &pkt,
+            &initial_asb,
             delayed_ack ? sizeof(initial_asb) : 0);
     if(ret != ADB_ERR_OK)
         return ret;
+
     if(!adb__packet_check_cmd(&pkt, ADB__CMD_OKAY))
     {
         ret = ADB_ERR_PROTOCOL;
@@ -576,10 +602,12 @@ adb_error_t adb_pull(
     req.id = ADB__SYNC_ID_RECV_V2;
     req.path_len = (uint32_t)path_len;
     msg.id = ADB__SYNC_ID_RECV_V2;
+    msg.flags = decomp_type_to_flags[decomp_type];
 
-    p = adb__mempcpy(req_payload, &req, sizeof(req));
-    p = adb__mempcpy(p, path, path_len);
-    (void)adb__mempcpy(p, &msg, sizeof(msg));
+    req_cursor = req_payload;
+    req_cursor = adb__mempcpy(req_cursor, &req, sizeof(req));
+    req_cursor = adb__mempcpy(req_cursor, path, path_len);
+    memcpy(req_cursor, &msg, sizeof(msg));
 
     pkt.command = ADB__CMD_WRTE;
     pkt.arg0 = local_id;
@@ -589,54 +617,67 @@ adb_error_t adb_pull(
     ret = adb__packet_write(conn, &pkt, req_payload);
     if(ret != ADB_ERR_OK)
         goto cleanup;
+   
+    ret = adb__decomp_create(&decomp, decomp_type);
+    if(ret != ADB_ERR_OK)
+        goto cleanup;
 
-    while(!data_done || !ack_recieved)
+    while(!data_done || !ack_received)
     {
         size_t pkt_offset = 0;
-        adb__free(pkt_payload); pkt_payload = NULL;
 
-        ret = adb__packet_read(conn, 
-                &pkt, (void**)&pkt_payload);
+        adb__free(pkt_payload);
+        pkt_payload = NULL;
+
+        ret = adb__packet_read(
+                conn,
+                &pkt,
+                (void**)&pkt_payload);
         if(ret != ADB_ERR_OK)
             goto cleanup;
 
+        if(pkt.command != ADB__CMD_OKAY &&
+                pkt.command != ADB__CMD_WRTE)
+        {
+            ret = ADB_ERR_PROTOCOL;
+            goto cleanup;
+        }
+
+        if(pkt.arg0 != remote_id || pkt.arg1 != local_id)
+        {
+            ADB__ERROR("unexpected packet IDs");
+            ADB__INFO(
+                    "expected local: %u, remote: %u",
+                    local_id,
+                    remote_id);
+            ADB__INFO(
+                    "got local: %u, remote: %u",
+                    pkt.arg1,
+                    pkt.arg0);
+
+            ret = ADB_ERR_PROTOCOL;
+            goto cleanup;
+        }
+
         if(pkt.command == ADB__CMD_OKAY)
         {
-            if(pkt.arg0 != remote_id || pkt.arg1 != local_id)
-            {
-                ADB__ERROR("unexpected acknowledgement id");
-                ADB__INFO("got local: %u, remote: %u",
-                        local_id, remote_id);
-                ADB__INFO("got local: %u, remote: %u",
-                        pkt.arg1, pkt.arg0);
-                ret = ADB_ERR_PROTOCOL;
-                goto cleanup;
-            }
-            
             if(delayed_ack)
             {
                 if(!adb__packet_check_size(&pkt, sizeof(initial_asb)))
-                    { ret = ADB_ERR_PROTOCOL; goto cleanup; }
+                {
+                    ret = ADB_ERR_PROTOCOL;
+                    goto cleanup;
+                }
                 memcpy(&initial_asb, pkt_payload, sizeof(initial_asb));
-            } else {
-                if(!adb__packet_check_size(&pkt, 0))
-                    { ret = ADB_ERR_PROTOCOL; goto cleanup; }
             }
-            ack_recieved = true;
-            continue;
-        }
+            else if(!adb__packet_check_size(&pkt, 0))
+            {
+                ret = ADB_ERR_PROTOCOL;
+                goto cleanup;
+            }
 
-        if(!adb__packet_check_cmd(&pkt, ADB__CMD_WRTE))
-            { ret = ADB_ERR_PROTOCOL; goto cleanup; }
-        if(pkt.arg0 != remote_id || pkt.arg1 != local_id)
-        {
-            ADB__ERROR("unexpected acknowledgement id");
-            ADB__INFO("got local: %u, remote: %u",
-                    local_id, remote_id);
-            ADB__INFO("got local: %u, remote: %u",
-                    pkt.arg1, pkt.arg0);
-            ret = ADB_ERR_PROTOCOL;
-            goto cleanup;
+            ack_received = true;
+            continue;
         }
 
         while(pkt_offset < pkt.payload_size && !data_done)
@@ -644,78 +685,67 @@ adb_error_t adb_pull(
             size_t pkt_remaining = 0;
             size_t available = 0;
             size_t header_remaining = 0;
+
             pkt_remaining = pkt.payload_size - pkt_offset;
+
+            /* The data may be split across multiple WRTE packets. */
             if(data_remaining > 0)
             {
                 available = ADB__MIN(pkt_remaining, data_remaining);
-                if(available > 0)
-                {
-                    int err = write_fn(userdata, 
-                            pkt_payload + pkt_offset, 
-                            available);
-                    if(err < 0)
-                    {
-                        ret = (adb_error_t)-err;
-                        goto cleanup;
-                    }
+                ret = adb__decomp_decompress(decomp, 
+                        pkt_payload + pkt_offset, 
+                        available, write_fn, userdata);
+                if(ret != ADB_ERR_OK)
+                    goto cleanup;
 
-                    if((uint32_t)err != available)
-                    {
-                        ret = ADB_ERR_IO;
-                        goto cleanup;
-                    }
-
-                    pkt_offset += available;
-                    data_remaining -= available;
-                }
+                pkt_offset += available;
+                data_remaining -= available;
                 continue;
             }
 
+            /* The header may be split across multiple WRTE packets. */
             header_remaining = sizeof(header) - header_written;
             available = ADB__MIN(pkt_remaining, header_remaining);
-            if(available > 0)
-            {
-                memcpy(
-                        (uint8_t*)&header + header_written,
-                        pkt_payload + pkt_offset,
-                        available);
-                pkt_offset += available;
-                header_written += available;
-            }
 
-            /* header is not fully read yet */
+            memcpy(
+                    (uint8_t*)&header + header_written,
+                    pkt_payload + pkt_offset,
+                    available);
+
+            pkt_offset += available;
+            header_written += available;
+
             if(header_written != sizeof(header))
                 continue;
 
             header_written = 0;
             if(header.id == ADB__SYNC_ID_DONE)
             {
-                if(header.size > 0)
+                if(header.size != 0)
                 {
                     ADB__ERROR("unexpected data payload");
-                    ADB__INFO("expected: 0 bytes, got: %u bytes",
+                    ADB__INFO(
+                            "expected: 0 bytes, got: %u bytes",
                             header.size);
+
                     ret = ADB_ERR_PROTOCOL;
                     goto cleanup;
                 }
 
-                /* expect no data left after DONE */
-                if(data_remaining > 0)
-                {
-                    ADB__ERROR("more data available");
-                    ADB__INFO("got: %u bytes", header.size);
-                }          
-                
                 data_done = true;
                 break;
-            } 
+            }
+
             if(header.id != ADB__SYNC_ID_DATA)
             {
                 ADB__ERROR("unexpected data id");
-                ADB__INFO("expected: 0x%08X (%.4s), got: 0x%08X (%.4s)", 
-                        (uint32_t)ADB__SYNC_ID_DATA, 
+                ADB__INFO(
+                        "expected: 0x%08X (%.4s), got: 0x%08X (%.4s)",
+                        (uint32_t)ADB__SYNC_ID_DATA,
                         (uint8_t*)(uint32_t[1]){ADB__SYNC_ID_DATA},
-                        header.id, (uint8_t*)&header.id);
+                        header.id,
+                        (uint8_t*)&header.id);
+
                 ret = ADB_ERR_PROTOCOL;
                 goto cleanup;
             }
@@ -723,35 +753,50 @@ adb_error_t adb_pull(
             if(header.size > ADB__SYNC_DATA_MAX)
             {
                 ADB__ERROR("data size exceeds the maximum allowed size");
-                ADB__INFO("max size: %d bytes, got: %u bytes",
+                ADB__INFO(
+                        "max size: %d bytes, got: %u bytes",
                         ADB__SYNC_DATA_MAX,
                         header.size);
-                ret = ADB_ERR_PROTOCOL;   
+
+                ret = ADB_ERR_PROTOCOL;
                 goto cleanup;
             }
 
             data_remaining = header.size;
         }
 
+        /*
+         * Account for the complete WRTE packet before sending its ACK.
+         */
         asb -= (int32_t)pkt.payload_size;
 
         pkt.command = ADB__CMD_OKAY;
         pkt.arg0 = local_id;
         pkt.arg1 = remote_id;
+        pkt.payload_size = 0;
 
         if(delayed_ack && asb < 0)
         {
             int32_t consumed = initial_asb - asb;
             pkt.payload_size = sizeof(consumed);
-            ret = adb__packet_write(conn, &pkt, &consumed);
-        } else {
-            pkt.payload_size = 0;
-            ret = adb__packet_write(conn, &pkt, NULL);
+            ret = adb__packet_write(
+                    conn,
+                    &pkt,
+                    &consumed);
+        }
+        else
+        {
+            ret = adb__packet_write(
+                    conn,
+                    &pkt,
+                    NULL);
         }
 
         if(ret != ADB_ERR_OK)
         {
-            adb__log_err_adb(ret, "failed to send acknowledgement signal");
+            adb__log_err_adb(
+                    ret,
+                    "failed to send acknowledgement signal");
             goto cleanup;
         }
     }
@@ -763,6 +808,7 @@ cleanup:
     pkt.arg0 = local_id;
     pkt.arg1 = remote_id;
     pkt.payload_size = 0;
+
     ret2 = adb__packet_write(conn, &pkt, NULL);
     if(ret2 != ADB_ERR_OK)
     {
@@ -770,10 +816,43 @@ cleanup:
         ret = ret != ADB_ERR_OK ? ret : ret2;
     }
 
+    adb__decomp_destroy(decomp);
     adb__free(pkt_payload);
     return ret;
 }
 
+adb_error_t adb_pull(
+        adb_conn_t *conn,
+        const char *path,
+        const adb_write_fn write_fn,
+        void *userdata)
+{
+    struct {
+        const char *feature;
+        adb__decomp_type_t decomp_type;
+    } check_orders[ADB__DECOMP_COUNT] =
+    {
+        { ADB__FEATURE_SENDRECV_V2_BROTLI, ADB__DECOMP_BROTLI },
+        { ADB__FEATURE_SENDRECV_V2_LZ4, ADB__DECOMP_LZ4 },
+        { ADB__FEATURE_SENDRECV_V2_ZSTD, ADB__DECOMP_ZSTD },
+        { ADB__FEATURE_SENDRECV_V2, ADB__DECOMP_NONE },
+    };
+
+    if(!conn || !path || !write_fn)
+        return ADB_ERR_PARAM;
+
+    for(size_t i = 0; i < ADB__ARRSZ(check_orders); i++)
+    {
+        /* XXX: dunno it needs to try another if current failed */
+        if(adb__has_feature(conn, check_orders[i].feature))
+        {
+            return adb__pull_impl(conn, path, 
+                    check_orders[i].decomp_type, 
+                    write_fn, userdata);
+        }
+    }
+    return ADB_ERR_UNSUPPORTED;
+}
 
 void adb_conn_destroy(
         adb_conn_t *conn)

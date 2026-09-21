@@ -5,8 +5,8 @@
 
 typedef struct
 {
-    adb_conn_read_fn read;
-    adb_conn_write_fn write;
+    adb_read_fn read;
+    adb_write_fn write;
     void *userdata;
 } adb__custom_transport_t;
 
@@ -85,8 +85,8 @@ static void adb__custom_destroy(
 
 adb_error_t adb__custom_transport_create(
         adb__transport_t *transport,
-        adb_conn_read_fn read_cb,
-        adb_conn_write_fn write_cb,
+        adb_read_fn read_cb,
+        adb_write_fn write_cb,
         void *userdata)
 {
     adb__custom_transport_t *custom = NULL;

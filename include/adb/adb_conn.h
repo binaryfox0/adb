@@ -10,12 +10,12 @@ typedef struct adb_conn adb_conn_t;
 typedef struct adb_wired_info adb_wired_info_t;
 typedef struct adb_key adb_key_t; 
 
-typedef int (*adb_conn_read_fn)(
+typedef int (*adb_read_fn)(
         void *userdata,
         uint8_t *buf,
         size_t size);
 
-typedef int (*adb_conn_write_fn)(
+typedef int (*adb_write_fn)(
         void *userdata,
         const uint8_t *buf,
         size_t size);
@@ -42,8 +42,8 @@ adb_error_t adb_conn_create_wireless(
 adb_error_t adb_conn_create_custom(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
-        const adb_conn_read_fn read_cb,
-        const adb_conn_write_fn write_cb,
+        const adb_read_fn read_cb,
+        const adb_write_fn write_cb,
         void *userdata,
         const adb_conn_profile_t profile);
 
@@ -55,7 +55,7 @@ adb_error_t adb_handshake(
 adb_error_t adb_pull(
         adb_conn_t *conn,
         const char *path,
-        const adb_conn_write_fn write_fn,
+        const adb_write_fn write_fn,
         void *userdata);
 
 void adb_conn_destroy(
