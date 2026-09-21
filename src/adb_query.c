@@ -716,29 +716,27 @@ adb_error_t adb_query_wireless(
     return ADB_ERR_UNSUPPORTED;
 }
 
-adb_error_t adb_query_wireless_with_guid(
+adb_error_t adb_query_wireless_with_service(
         adb_ctx_t *ctx,
-        const char *device_guid,
+        const char *service_name,
         adb_wireless_info_t **out_info)
 {
     adb_error_t res = ADB_ERR_OK;
-    adb_wireless_info_t *tmp = NULL;
-    if(!ctx || !device_guid || !out_info)
+    adb_wireless_info_t tmp = {0};
+    if(!ctx || !service_name || !out_info)
         return ADB_ERR_PARAM;
 
-    tmp = adb__calloc(1, sizeof(*tmp));
-    if(!tmp)
-        return ADB_ERR_NO_MEM;
-
     res = adb__query_wireless_with_guid_impl(
-            device_guid, &tmp->addr);
+            service_name, &tmp.addr);
     if(res != ADB_ERR_OK)
-    {
-        adb__free(tmp);
         return res;
-    }
+    if(tmp.addr.sa_family == AF_UNSPEC)
+        return ADB_ERR_OK;
 
-    *out_info = tmp;
+    *out_info = adb__malloc(sizeof(tmp));
+    if(!out_info)
+        return ADB_ERR_NO_MEM;
+    memcpy(*out_info, &tmp, sizeof(tmp));
     return ADB_ERR_OK;
 }
 

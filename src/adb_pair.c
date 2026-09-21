@@ -1,5 +1,7 @@
 #include <adb/adb_pair.h>
 
+#include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <ctype.h>
 
@@ -23,6 +25,9 @@
 #define ADB__PAIR_HEADER_MAX_VER    1
 #define ADB__MAX_PEER_INFO_SIZE     8192
 #define ADB__PAIR_MAX_PAYLOAD_SIZE  (ADB__MAX_PEER_INFO_SIZE * 2)
+#define ADB__SPAKE2_PASSWORD_LENGTH \
+    (ADB__PAIR_CODE_DIGITS + ADB__TLS_EXPORTED_KEY_LENGTH)
+#define ADB__QR_RANDOM_LENGTH 10
 
 typedef enum 
 {
@@ -239,7 +244,8 @@ static inline bool adb__pair_check_packet(
 
 static adb_error_t adb__exchange_message(
         adb_conn_t *conn,
-        const char *code,
+        const uint8_t *password,
+        const size_t password_len,
         uint8_t out_key_material[SPAKE2_MAX_KEY_LENGTH],
         size_t *out_key_material_len)
 {
@@ -251,7 +257,6 @@ static adb_error_t adb__exchange_message(
     int err = 0;
     uint8_t random_data[SPAKE2_RANDOM_DATA_LENGTH] = {0};
     spake2_ctx_t *spake2 = NULL;
-    uint8_t password[ADB__PAIR_CODE_DIGITS + ADB__TLS_EXPORTED_KEY_LENGTH] = {0};
     uint8_t my_msg[SPAKE2_MAX_MESSAGE_LENGTH] = {0};
     size_t my_msg_size = 0;
     
@@ -260,12 +265,6 @@ static adb_error_t adb__exchange_message(
 
     ADB__INFO("exchanging SPAKE2 message with the device");
 
-    memcpy(password, code, ADB__PAIR_CODE_DIGITS);
-    ret = adb__tls_export_keying_material(
-            adb__conn_get_tls(conn),
-            password + ADB__PAIR_CODE_DIGITS);
-    if(ret != ADB_ERR_OK)
-        return ret;
     
     err = mbedtls_ctr_drbg_random(
             &adb__conn_get_ctx(conn)->drbg,
@@ -278,11 +277,7 @@ static adb_error_t adb__exchange_message(
         goto cleanup;
     }
 
-    adb__log_payload(
-            password, 
-            sizeof(password), 
-            "spake2 password");
-
+    adb__log_payload(password, password_len, "spake2 password");
     spake2 = spake2_ctx_create(
             &(spake2_allocator_t) {
                 .malloc = adb__alloc_get()->malloc,
@@ -473,47 +468,198 @@ adb_error_t adb_pair(
         char *out_guid,
         const size_t out_guid_len)
 {
-    adb_error_t ret = ADB_ERR_OK;
+    adb_error_t res = ADB_ERR_OK;
 
+    uint8_t password[ADB__PAIR_CODE_DIGITS + ADB__TLS_EXPORTED_KEY_LENGTH] = {0};
     uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
     size_t key_material_len = 0;
     char device_guid[ADB__MEMSZ(adb__peer_info_t, data)] = {0};
     size_t guid_len = 0;
 
     if(!conn || !adb__verify_pairing_code(code) || 
-            (!out_guid ^ (out_guid_len == 0)))
+            !out_guid || out_guid_len == 0)
         return ADB_ERR_PARAM;
 
     ADB__INFO("pairing wireless device with code \"%6s\"", code);
-    ret = adb__conn_upgrade_tls(conn, key);
-    if(ret != ADB_ERR_OK)
-        return ret;
+    res = adb__conn_upgrade_tls(conn, key);
+    if(res != ADB_ERR_OK)
+        return res;
+    
+    memcpy(password, code, ADB__PAIR_CODE_DIGITS);
+    res = adb__tls_export_keying_material(
+            adb__conn_get_tls(conn),
+            password + ADB__PAIR_CODE_DIGITS);
+    if(res != ADB_ERR_OK)
+        return res;
 
-    ret = adb__exchange_message(
-            conn, code, 
-            key_material, 
-            &key_material_len);
-    if(ret != ADB_ERR_OK)
-        return ret;
+    res = adb__exchange_message(
+            conn, 
+            password, sizeof(password), 
+            key_material, &key_material_len);
+    if(res != ADB_ERR_OK)
+        return res;
 
-    ret = adb__exchange_info(
+    res = adb__exchange_info(
             conn, 
             key_material,
             key_material_len,
             key,
             device_guid);
-    if(ret != ADB_ERR_OK)
-        return ret;
+    if(res != ADB_ERR_OK)
+        return res;
 
     guid_len = strlen(device_guid) + 1;
     if(out_guid)
     {
         if(out_guid_len < guid_len)
-            ret = ADB_ERR_TOO_SMALL;
+            return ADB_ERR_TOO_SMALL;
         else
             memcpy(out_guid, device_guid, guid_len);
     }
 
-    ADB__INFO("pairing wireless device successfully");
+    ADB__INFO("pairing wireless device guid=\"%s\" successfully",
+            device_guid);
     return ADB_ERR_OK;
+}
+
+static adb_error_t adb__qr_random_string(
+        adb_ctx_t *ctx,
+        uint8_t *out,
+        const size_t size)
+{
+    static const char charset[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789-_";
+
+    int err = 0;
+    if(!ctx || !out || size == 0)
+        return ADB_ERR_PARAM;
+
+    err = mbedtls_ctr_drbg_random(
+            &ctx->drbg,
+            out,
+            size);
+            
+    if(err != 0)
+        return ADB_ERR_CRYPTO;
+
+    for(size_t i = 0; i < size; i++)
+        out[i] = charset[out[i] & 0x3FU];
+
+    return ADB_ERR_OK;
+}
+
+adb_error_t adb_pair_qr_build_payload(
+        adb_ctx_t *ctx,
+        char *out_service,
+        const size_t service_size,
+        char *out_secret,
+        const size_t secret_size)
+{
+    adb_error_t res = ADB_ERR_OK;
+    uint8_t random[ADB__QR_RANDOM_LENGTH] = {0};
+    int written = 0;
+    if(!ctx || !out_service || service_size == 0 || 
+            !out_secret || secret_size == 0)
+        return ADB_ERR_PARAM;
+
+    res = adb__qr_random_string(ctx, random, sizeof(random));
+    if(res != ADB_ERR_OK)
+        return res;
+
+    written = snprintf(
+            out_service, service_size,
+            "studio-%." ADB__STRINGIFY(ADB__QR_RANDOM_LENGTH) "s",
+            random);
+    if(written < 0 || (size_t)written >= service_size)
+        return ADB_ERR_TOO_SMALL;
+
+    res = adb__qr_random_string(ctx, random, sizeof(random));
+    if(res != ADB_ERR_OK)
+        return res;
+
+    if(secret_size - 1 < ADB__QR_RANDOM_LENGTH)
+        return ADB_ERR_TOO_SMALL;
+    
+    res = adb__qr_random_string(ctx, 
+            (uint8_t*)out_secret, ADB__QR_RANDOM_LENGTH);
+    if(res != ADB_ERR_OK)
+        return res;
+    out_secret[ADB__QR_RANDOM_LENGTH] = '\0';
+    
+    return ADB_ERR_OK;
+}
+
+adb_error_t adb_pair_qr_encode_payload(
+        const char *service_name,
+        const char *secret,
+        char *out,
+        const size_t size)
+{
+    int written = 0;
+    if(!service_name || !secret || !out || size == 0)
+        return ADB_ERR_PARAM;
+
+    written = snprintf(out, size,
+            "WIFI:T:ADB;S:%s;P:%s;;",
+            service_name, secret);
+    if(written < 0 || (size_t)written >= size)
+        return ADB_ERR_TOO_SMALL;
+    
+    return ADB_ERR_OK;
+}
+
+adb_error_t adb_pair_qr(
+        adb_conn_t *conn,
+        const char *secret,
+        adb_key_t *key,
+        char *out_guid,
+        const size_t out_guid_len)
+{
+    adb_error_t res = ADB_ERR_OK;
+
+    uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
+    size_t key_material_len = 0;
+    char device_guid[ADB__MEMSZ(adb__peer_info_t, data)] = {0};
+    size_t guid_len = 0;
+
+    if(!conn || !secret || 
+            !out_guid || out_guid_len == 0)
+        return ADB_ERR_PARAM;
+
+    ADB__INFO("pairing wireless device with secret");
+    res = adb__conn_upgrade_tls(conn, key);
+    if(res != ADB_ERR_OK)
+        return res;
+    
+    res = adb__exchange_message(
+            conn, 
+            (const uint8_t*)secret, strlen(secret), 
+            key_material, &key_material_len);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    res = adb__exchange_info(
+            conn, 
+            key_material,
+            key_material_len,
+            key,
+            device_guid);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    guid_len = strlen(device_guid) + 1;
+    if(out_guid)
+    {
+        if(out_guid_len < guid_len)
+            return ADB_ERR_TOO_SMALL;
+        else
+            memcpy(out_guid, device_guid, guid_len);
+    }
+
+    ADB__INFO("pairing wireless device guid=\"%s\" successfully",
+            device_guid);
+    return ADB_ERR_OK;
+
 }

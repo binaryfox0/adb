@@ -101,7 +101,7 @@ static adb_error_t adb__conn_post_init(
     return ADB_ERR_OK;
 }
 
-adb_error_t adb_conn_create_wired(
+adb_error_t adb_conn_create_wired_from_info(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
         const adb_wired_info_t *info)
@@ -145,9 +145,6 @@ adb_error_t adb__conn_from_sockaddr(
     adb_conn_t *tmp = NULL;
     adb_error_t res = ADB_ERR_OK;
 
-    if(!conn || !ctx || !addr)
-        return ADB_ERR_PARAM;
-
     tmp = adb__calloc(1, sizeof(*tmp));
     if(!tmp)
         return ADB_ERR_NO_MEM;
@@ -186,6 +183,16 @@ adb_error_t adb_conn_create_wireless(
     if(!adb__tcp_sockaddr_from_host_port(&addr, host, port))
         return ADB_ERR_PARAM;
     return adb__conn_from_sockaddr(conn, ctx, &addr);
+}
+
+adb_error_t adb_conn_create_wireless_from_info(
+        adb_conn_t **conn,
+        adb_ctx_t *ctx,
+        const adb_wireless_info_t *info)
+{
+    if(!conn || !ctx || !info)
+        return ADB_ERR_PARAM;
+    return adb__conn_from_sockaddr(conn, ctx, &info->addr);
 }
 
 adb_error_t adb_conn_create_custom(

@@ -6,11 +6,13 @@
 
 #include <pwd.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 
 #include <aparse.h>
 #include <adb/adb.h>
+#include <qrcodegen.h>
 
 #define error aparse_prog_error
 #define info aparse_prog_info
@@ -31,7 +33,7 @@ static void log_callback(
     (void)userdata;
     switch(level)
     {
-        case ADB_LOG_DEBUG:
+        case ADB_LOG_DEBUG: 
             aparse_log("adb", APARSE__DEBUG_LABEL, "%s", msg);
             break;
 
@@ -232,6 +234,126 @@ cleanup:
     adb_ctx_destroy(ctx);
 }
 
+static bool display_qr(
+        const char *payload)
+{
+    uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
+    uint8_t tmpbuf[qrcodegen_BUFFER_LEN_MAX];
+
+    bool status = qrcodegen_encodeText(
+        payload, tmpbuf, qrcode,
+        qrcodegen_Ecc_HIGH,
+        qrcodegen_VERSION_MIN,
+        qrcodegen_VERSION_MAX,
+        qrcodegen_Mask_AUTO,
+        true
+    );
+    if(!status)
+        return false;
+    
+    int size = qrcodegen_getSize(qrcode);
+    int border = 4;
+
+    for (int y = -border; y < size + border; y++) {
+        for (int x = -border; x < size + border; x++) {
+
+            bool isBlack = false;
+
+            if (x >= 0 && x < size && y >= 0 && y < size) {
+                isBlack = qrcodegen_getModule(qrcode, x, y);
+            }
+
+            if (isBlack)
+                printf("  ");  // black
+            else
+                printf("\u2588\u2588");            // white
+        }
+        printf("\n");
+    }
+    return true;
+}
+
+static void pair_qr_command(
+        const aparse_arg *args,
+        void *param)
+{
+    char service_name[32] = {0};
+    char secret[32] = {0};
+    char payload[128] = {0};
+
+    adb_wireless_info_t *info = NULL;
+    char key_path[PATH_MAX] = {0};
+
+    adb_error_t err = ADB_ERR_OK;
+    adb_ctx_t *ctx = NULL;
+    adb_conn_t *conn = NULL;
+    adb_key_t *key = NULL;
+
+    (void)args;
+    (void)param;
+
+    CHECK(adb_ctx_create(&ctx), 
+            err, cleanup, "failed to create libadb context");
+    CHECK(adb_pair_qr_build_payload(ctx, 
+                service_name, sizeof(service_name),
+                secret, sizeof(secret)),
+            err, cleanup, "failed to build QR payload");
+    CHECK(adb_pair_qr_encode_payload(service_name, secret, 
+                payload, sizeof(payload)),
+            err, cleanup, "failed to encode QR code");
+    display_qr(payload);
+
+    struct timespec start = {0}, now = {0};
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for(;;)
+    {
+        double elapsed = 0.0;
+        err = adb_query_wireless_with_service(ctx, 
+                    service_name, &info);
+        if(err == ADB_ERR_TIMEOUT)
+            continue;
+        else if(err != ADB_ERR_OK)
+            goto cleanup;
+
+        if(info)
+            break;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        elapsed = (double)(now.tv_sec - start.tv_sec) + 
+            (double)(now.tv_nsec - start.tv_nsec) / 1e9;
+        if(elapsed >= 30)
+        {
+            err = ADB_ERR_TIMEOUT;
+            error("no device was found for %d secs", 30);
+            goto cleanup;
+        }
+    }
+
+    CHECK(adb_conn_create_wireless_from_info(&conn, ctx, info),
+            err, cleanup, "failed to create connection for pairing");
+
+    snprintf(key_path, sizeof(key_path), "%s/%s",
+            get_home_dir(), ".android/adbkey");
+    if(is_file_exist(key_path))
+    {
+        CHECK(adb_key_load(&key, ctx, key_path), 
+                err, cleanup, "failed to load key from \"%s\"", key_path);
+    } else {
+        info("no key was found, generating a new one");
+        CHECK(adb_key_generate(&key, ctx),
+                err, cleanup, "failed to generate new key");
+        CHECK(adb_key_save(key, key_path), 
+                err, cleanup, "failed to save key to \"%s\"", key_path);
+    }
+
+    CHECK(adb_pair_qr(conn, secret, key, NULL, 0),
+            err, cleanup, "failed to pair with given device");
+
+cleanup:
+    adb_key_destroy(key);
+    adb_conn_destroy(conn);
+    adb_ctx_destroy(ctx);
+}
+
 static int write_fn(
         void *userdata,
         const uint8_t *buf,
@@ -393,6 +515,12 @@ int main(int argc, char **argv)
                     0, sizeof(const char*),
                     sizeof(const char*), sizeof(const char*)
                 }, 2),
+        aparse_arg_subparser_impl(
+                "pair-qr", 
+                NULL, pair_qr_command, 
+                NULL, 0, 
+                "Pair wireless ADB device through TCP with QR", 
+                NULL, 0),
         aparse_arg_subparser_impl(
                 "connect", 
                 connect_args, connect_command, 

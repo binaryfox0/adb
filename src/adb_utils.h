@@ -16,7 +16,8 @@
 #define ADB__STRINGIFY_IMPL(x) #x
 #define ADB__STRINGIFY(x) ADB__STRINGIFY_IMPL(x)
 
-#define adb__mempcpy(dest, src, n) ((void*)((uint8_t*)memcpy((dest), (src), (n)) + (n)))
+#define adb__mempcpy(dest, src, n) \
+    ((void*)((uint8_t*)memcpy((dest), (src), (n)) + (n)))
 
 static inline uint32_t adb__endian_swap32(
         const uint32_t x)

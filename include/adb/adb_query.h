@@ -25,9 +25,9 @@ adb_error_t adb_query_wireless(
         adb_wireless_info_t ***out_infos,
         size_t *out_info_count);
 
-adb_error_t adb_query_wireless_with_guid(
+adb_error_t adb_query_wireless_with_service(
         adb_ctx_t *ctx,
-        const char *device_guid,
+        const char *service_name,
         adb_wireless_info_t **out_info);
 
 adb_error_t adb_wireless_info_host(
