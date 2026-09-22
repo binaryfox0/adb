@@ -299,7 +299,7 @@ static adb_error_t adb__exchange_message(
             &my_msg_size, 
             sizeof(my_msg),
             password, 
-            sizeof(password),
+            password_len,
             random_data))
     {
         ADB__ERROR("failed to generate SPAKE2 message");
@@ -342,7 +342,6 @@ static adb_error_t adb__exchange_message(
 
 cleanup:
     spake2_ctx_free(spake2);
-    adb__free(their_msg);
     return ret;
 }
 
@@ -366,6 +365,9 @@ static adb_error_t adb__exchange_info(
     ADB__INFO("exchanging info with device");
 
     ret = adb__aes_init(&aes, key_material, key_material_len);
+    if(ret != ADB_ERR_OK)
+        goto cleanup;
+
     my_info.type = ADB__PEER_INFO_PUBLIC_KEY; 
     ret = adb_key_generate_pubkey(
             key, 
@@ -477,7 +479,7 @@ adb_error_t adb_pair(
     size_t guid_len = 0;
 
     if(!conn || !adb__verify_pairing_code(code) || 
-            !out_guid || out_guid_len == 0)
+            (out_guid == 0 ^ out_guid_len == 0))
         return ADB_ERR_PARAM;
 
     ADB__INFO("pairing wireless device with code \"%6s\"", code);
@@ -533,6 +535,7 @@ static adb_error_t adb__qr_random_string(
         "0123456789-_";
 
     int err = 0;
+
     if(!ctx || !out || size == 0)
         return ADB_ERR_PARAM;
 
@@ -540,7 +543,6 @@ static adb_error_t adb__qr_random_string(
             &ctx->drbg,
             out,
             size);
-            
     if(err != 0)
         return ADB_ERR_CRYPTO;
 
@@ -560,16 +562,24 @@ adb_error_t adb_pair_qr_build_payload(
     adb_error_t res = ADB_ERR_OK;
     uint8_t random[ADB__QR_RANDOM_LENGTH] = {0};
     int written = 0;
-    if(!ctx || !out_service || service_size == 0 || 
+
+    if(!ctx || !out_service || service_size == 0 ||
             !out_secret || secret_size == 0)
         return ADB_ERR_PARAM;
+
+    if(service_size <= strlen("studio-") + ADB__QR_RANDOM_LENGTH)
+        return ADB_ERR_TOO_SMALL;
+
+    if(secret_size <= ADB__QR_RANDOM_LENGTH)
+        return ADB_ERR_TOO_SMALL;
 
     res = adb__qr_random_string(ctx, random, sizeof(random));
     if(res != ADB_ERR_OK)
         return res;
 
     written = snprintf(
-            out_service, service_size,
+            out_service,
+            service_size,
             "studio-%." ADB__STRINGIFY(ADB__QR_RANDOM_LENGTH) "s",
             random);
     if(written < 0 || (size_t)written >= service_size)
@@ -579,15 +589,9 @@ adb_error_t adb_pair_qr_build_payload(
     if(res != ADB_ERR_OK)
         return res;
 
-    if(secret_size - 1 < ADB__QR_RANDOM_LENGTH)
-        return ADB_ERR_TOO_SMALL;
-    
-    res = adb__qr_random_string(ctx, 
-            (uint8_t*)out_secret, ADB__QR_RANDOM_LENGTH);
-    if(res != ADB_ERR_OK)
-        return res;
-    out_secret[ADB__QR_RANDOM_LENGTH] = '\0';
-    
+    memcpy(out_secret, random, sizeof(random));
+    out_secret[sizeof(random)] = '\0';
+
     return ADB_ERR_OK;
 }
 
@@ -619,13 +623,17 @@ adb_error_t adb_pair_qr(
 {
     adb_error_t res = ADB_ERR_OK;
 
+    /* we do not enforce secret len */
+    size_t secret_len = 0;
+    size_t password_len = 0;
+    uint8_t *password = NULL;
     uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
     size_t key_material_len = 0;
     char device_guid[ADB__MEMSZ(adb__peer_info_t, data)] = {0};
     size_t guid_len = 0;
 
     if(!conn || !secret || 
-            !out_guid || out_guid_len == 0)
+            (out_guid == 0 ^ out_guid_len == 0))
         return ADB_ERR_PARAM;
 
     ADB__INFO("pairing wireless device with secret");
@@ -633,10 +641,25 @@ adb_error_t adb_pair_qr(
     if(res != ADB_ERR_OK)
         return res;
     
+    secret_len = strlen(secret);
+    password_len = secret_len + ADB__TLS_EXPORTED_KEY_LENGTH;
+    password = adb__malloc(password_len);
+    if(!password)
+        return ADB_ERR_NO_MEM;
+
+    memcpy(password, secret, secret_len);
+    res = adb__tls_export_keying_material(
+            adb__conn_get_tls(conn), 
+            password + secret_len);
+    if(res != ADB_ERR_OK)
+        return res;
+
     res = adb__exchange_message(
             conn, 
-            (const uint8_t*)secret, strlen(secret), 
-            key_material, &key_material_len);
+            password,
+            password_len,
+            key_material, 
+            &key_material_len);
     if(res != ADB_ERR_OK)
         return res;
 

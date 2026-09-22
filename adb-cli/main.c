@@ -308,7 +308,7 @@ static void pair_qr_command(
     for(;;)
     {
         double elapsed = 0.0;
-        err = adb_query_wireless_with_service(ctx, 
+        err = adb_find_wireless_pairing(ctx, 
                     service_name, &info);
         if(err == ADB_ERR_TIMEOUT)
             continue;
