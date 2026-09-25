@@ -19,6 +19,7 @@ typedef enum
     ADB_ERR_CRYPTO,
     ADB_ERR_TOO_SMALL,
     ADB_ERR_COMPRESS,
+    ADB_ERR_UNIMPLEMENTED,
     ADB__ERR_COUNT
 } adb_error_t;
 

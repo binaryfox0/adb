@@ -8,6 +8,12 @@
 #include <adb/adb_conn.h>
 #include "adb_sock.h"
 
+#define ADB__FEATURE_SENDRECV_V2        "sendrecv_v2"
+#define ADB__FEATURE_SENDRECV_V2_BROTLI "sendrecv_v2_brotli"
+#define ADB__FEATURE_SENDRECV_V2_LZ4    "sendrecv_v2_lz4"
+#define ADB__FEATURE_SENDRECV_V2_ZSTD   "sendrecv_v2_zstd"
+#define ADB__FEATURE_DELAYED_ACK        "delayed_ack"
+
 typedef struct adb_ctx adb_ctx_t;
 typedef struct adb_conn adb_conn_t;
 typedef struct adb__tls adb__tls_t;
@@ -44,6 +50,10 @@ adb__tls_t *adb__conn_get_tls(
 
 adb_ctx_t *adb__conn_get_ctx(
         adb_conn_t *conn);
+
+bool adb__has_feature(
+        adb_conn_t *conn,
+        const char *feature);
 
 
 #endif

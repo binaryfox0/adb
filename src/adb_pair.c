@@ -473,6 +473,8 @@ adb_error_t adb_pair(
     adb_error_t res = ADB_ERR_OK;
 
     uint8_t password[ADB__PAIR_CODE_DIGITS + ADB__TLS_EXPORTED_KEY_LENGTH] = {0};
+    void *p = NULL;
+
     uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
     size_t key_material_len = 0;
     char device_guid[ADB__MEMSZ(adb__peer_info_t, data)] = {0};
@@ -487,10 +489,9 @@ adb_error_t adb_pair(
     if(res != ADB_ERR_OK)
         return res;
     
-    memcpy(password, code, ADB__PAIR_CODE_DIGITS);
+    p = adb__mempcpy(password, code, ADB__PAIR_CODE_DIGITS);
     res = adb__tls_export_keying_material(
-            adb__conn_get_tls(conn),
-            password + ADB__PAIR_CODE_DIGITS);
+            adb__conn_get_tls(conn), p);
     if(res != ADB_ERR_OK)
         return res;
 
@@ -623,15 +624,17 @@ adb_error_t adb_pair_qr(
 {
     adb_error_t res = ADB_ERR_OK;
 
-    /* we do not enforce secret len */
     size_t secret_len = 0;
     size_t password_len = 0;
     uint8_t *password = NULL;
+    void *p = NULL;
+
     uint8_t key_material[SPAKE2_MAX_KEY_LENGTH] = {0};
     size_t key_material_len = 0;
     char device_guid[ADB__MEMSZ(adb__peer_info_t, data)] = {0};
     size_t guid_len = 0;
 
+    /* we do not enforce secret len */
     if(!conn || !secret || 
             (out_guid == 0 ^ out_guid_len == 0))
         return ADB_ERR_PARAM;
@@ -647,10 +650,9 @@ adb_error_t adb_pair_qr(
     if(!password)
         return ADB_ERR_NO_MEM;
 
-    memcpy(password, secret, secret_len);
+    p = adb__mempcpy(password, secret, secret_len);
     res = adb__tls_export_keying_material(
-            adb__conn_get_tls(conn), 
-            password + secret_len);
+            adb__conn_get_tls(conn), p);
     if(res != ADB_ERR_OK)
         return res;
 

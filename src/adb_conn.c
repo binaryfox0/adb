@@ -22,6 +22,7 @@
 #include "adb_tls.h"
 #include "adb_str.h"
 #include "adb_decomp.h"
+#include "adb_sync.h"
 
 #include "adb_transport_usb.h"
 #include "adb_transport_tcp.h"
@@ -72,24 +73,6 @@ static const char *adb__conn_state_readable[ADB__CONN_STATE_COUNT] =
     [ADB__CONN_STATE_RESCUE]        = "rescue",
     [ADB__CONN_STATE_HOST]          = "host"
 };
-
-static bool adb__has_feature(
-        adb_conn_t *conn,
-        const char *feature)
-{
-    adb__str_t cur = {0};
-    adb__str_t token = {0};
-    if(!conn || !feature)
-        return false;
-
-    cur = conn->features;
-    while(adb__str_next_tok(&cur, ',', &token))
-    {
-        if(adb__str_compare_cstr(&token, feature))
-            return true;
-    }
-    return false;
-}
 
 static adb_error_t adb__conn_post_init(
         adb_conn_t *conn)
@@ -1147,33 +1130,31 @@ adb_error_t adb_pull(
         const adb_write_fn write_fn,
         void *userdata)
 {
-    
-    // struct {
-    //     const char *feature;
-    //     adb__decomp_type_t decomp_type;
-    // } check_orders[ADB__DECOMP_COUNT] =
-    // {
-    //     { ADB__FEATURE_SENDRECV_V2_BROTLI, ADB__DECOMP_BROTLI },
-    //     { ADB__FEATURE_SENDRECV_V2_LZ4, ADB__DECOMP_LZ4 },
-    //     { ADB__FEATURE_SENDRECV_V2_ZSTD, ADB__DECOMP_ZSTD },
-    //     { ADB__FEATURE_SENDRECV_V2, ADB__DECOMP_NONE },
-    // };
+    struct {
+        const char *feature;
+        adb__decomp_type_t decomp_type;
+    } check_orders[ADB__DECOMP_COUNT] =
+    {
+        { ADB__FEATURE_SENDRECV_V2_BROTLI, ADB__DECOMP_BROTLI },
+        { ADB__FEATURE_SENDRECV_V2_LZ4, ADB__DECOMP_LZ4 },
+        { ADB__FEATURE_SENDRECV_V2_ZSTD, ADB__DECOMP_ZSTD },
+        { ADB__FEATURE_SENDRECV_V2, ADB__DECOMP_NONE },
+    };
 
-    // if(!conn || !path || !write_fn)
-    //     return ADB_ERR_PARAM;
+    if(!conn || !path || !write_fn)
+        return ADB_ERR_PARAM;
 
-    // for(size_t i = 0; i < ADB__ARRSZ(check_orders); i++)
-    // {
-    //     /* XXX: dunno it needs to try another if current failed */
-    //     if(adb__has_feature(conn, check_orders[i].feature))
-    //     {
-    //         return adb__pull_v2(conn, path, 
-    //                 check_orders[i].decomp_type, 
-    //                 write_fn, userdata);
-    //     }
-    // }
-    // return ADB_ERR_UNSUPPORTED;
-    (void)adb__pull_v2;
+    for(size_t i = 0; i < ADB__ARRSZ(check_orders); i++)
+    {
+        /* XXX: dunno it needs to try another if current failed */
+        if(adb__has_feature(conn, check_orders[i].feature))
+        {
+            return adb__pull_v2(conn, path, 
+                    check_orders[i].decomp_type, 
+                    write_fn, userdata);
+        }
+    }
+
     return adb__pull_v1(conn, path, write_fn, userdata);   
 }
 /*
@@ -1282,5 +1263,23 @@ adb__tls_t *adb__conn_get_tls(
 adb_ctx_t *adb__conn_get_ctx(
         adb_conn_t *conn) {
     return conn ? conn->ctx : NULL;
+}
+
+bool adb__has_feature(
+        adb_conn_t *conn,
+        const char *feature)
+{
+    adb__str_t cur = {0};
+    adb__str_t token = {0};
+    if(!conn || !feature)
+        return false;
+
+    cur = conn->features;
+    while(adb__str_next_tok(&cur, ',', &token))
+    {
+        if(adb__str_compare_cstr(&token, feature))
+            return true;
+    }
+    return false;
 }
 

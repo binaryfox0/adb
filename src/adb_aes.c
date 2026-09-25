@@ -18,8 +18,7 @@ adb_error_t adb__aes_init(
     if(!aes || !key_material || key_material_len == 0)
         return ADB_ERR_PARAM;
 
-    aes->enc_seq = 0;
-    aes->dec_seq = 0;
+    *aes = (adb__aes_t){0};
 
     err = mbedtls_hkdf(
             mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
