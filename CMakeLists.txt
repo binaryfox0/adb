@@ -75,6 +75,48 @@ pkg_check_modules(lz4 liblz4 REQUIRED IMPORTED_TARGET)
 pkg_check_modules(zstd libzstd REQUIRED IMPORTED_TARGET)
 pkg_check_modules(brotlidec libbrotlidec REQUIRED IMPORTED_TARGET)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(lz4 REQUIRED IMPORTED_TARGET liblz4)
+
+include(CheckCSourceCompiles)
+
+set(CMAKE_REQUIRED_LIBRARIES PkgConfig::lz4)
+set(CMAKE_REQUIRED_DEFINITIONS -DLZ4F_STATIC_LINKING_ONLY)
+
+check_c_source_compiles("
+#include <stddef.h>
+#include <lz4frame.h>
+
+int main(void)
+{
+    (void)LZ4F_createDecompressionContext_advanced(
+        (LZ4F_CustomMem){0},
+        LZ4F_VERSION);
+    return 0;
+}
+" HAVE_LZ4F_CREATE_DECOMPRESSION_CONTEXT_ADVANCED)
+if(NOT HAVE_LZ4F_CREATE_DECOMPRESSION_CONTEXT_ADVANCED)
+    include(FetchContent)
+
+    set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
+    set(LZ4_BUILD_LEGACY_LZ4C OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+    set(LZ4_BUNDLED_MODE ON CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        lz4
+        GIT_REPOSITORY https://github.com/lz4/lz4.git
+        GIT_TAG v1.10.0
+        GIT_SHALLOW TRUE
+        SOURCE_SUBDIR build/cmake/
+    )
+
+    FetchContent_MakeAvailable(lz4)
+else()
+    add_library(lz4 ALIAS PkgConfig::lz4)
+endif()
+
 add_subdirectory(deps/mdns)
 add_subdirectory(spake2)
 
@@ -109,7 +151,7 @@ target_link_libraries(adb PRIVATE
     MbedTLS::mbedcrypto
     spake2
     mdns
-    PkgConfig::lz4
+    lz4
     PkgConfig::zstd
     PkgConfig::brotlidec)
 target_add_strict_flags(adb)

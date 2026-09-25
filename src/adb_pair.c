@@ -655,7 +655,7 @@ adb_error_t adb_pair_qr(
     res = adb__tls_export_keying_material(
             adb__conn_get_tls(conn), p);
     if(res != ADB_ERR_OK)
-        return res;
+        goto cleanup;
 
     res = adb__exchange_message(
             conn, 
@@ -664,7 +664,7 @@ adb_error_t adb_pair_qr(
             key_material, 
             &key_material_len);
     if(res != ADB_ERR_OK)
-        return res;
+        goto cleanup;
 
     res = adb__exchange_info(
             conn, 
@@ -673,7 +673,7 @@ adb_error_t adb_pair_qr(
             key,
             device_guid);
     if(res != ADB_ERR_OK)
-        return res;
+        goto cleanup;
 
     guid_len = strlen(device_guid) + 1;
     if(out_guid)
@@ -686,6 +686,9 @@ adb_error_t adb_pair_qr(
 
     ADB__INFO("pairing wireless device guid=\"%s\" successfully",
             device_guid);
-    return ADB_ERR_OK;
+
+cleanup:
+    adb__free(password);
+    return res;
 
 }

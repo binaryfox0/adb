@@ -281,7 +281,7 @@ static void pair_qr_command(
     char secret[32] = {0};
     char payload[128] = {0};
 
-    adb_wireless_info_t *info = NULL;
+    adb_wireless_info_t *conn_info = NULL;
     char key_path[PATH_MAX] = {0};
 
     adb_error_t err = ADB_ERR_OK;
@@ -305,18 +305,12 @@ static void pair_qr_command(
 
     struct timespec start = {0}, now = {0};
     clock_gettime(CLOCK_MONOTONIC, &start);
-    for(;;)
+    while(!conn_info)
     {
         double elapsed = 0.0;
         err = adb_find_wireless_pairing(ctx, 
-                    service_name, &info);
-        if(err == ADB_ERR_TIMEOUT)
-            continue;
-        else if(err != ADB_ERR_OK)
-            goto cleanup;
+                    service_name, &conn_info);
 
-        if(info)
-            break;
         clock_gettime(CLOCK_MONOTONIC, &now);
         elapsed = (double)(now.tv_sec - start.tv_sec) + 
             (double)(now.tv_nsec - start.tv_nsec) / 1e9;
@@ -326,9 +320,14 @@ static void pair_qr_command(
             error("no device was found for %d secs", 30);
             goto cleanup;
         }
+
+        if(err == ADB_ERR_TIMEOUT)
+            continue;
+        else if(err != ADB_ERR_OK)
+            goto cleanup;
     }
 
-    CHECK(adb_conn_create_wireless_from_info(&conn, ctx, info),
+    CHECK(adb_conn_create_wireless_from_info(&conn, ctx, conn_info),
             err, cleanup, "failed to create connection for pairing");
 
     snprintf(key_path, sizeof(key_path), "%s/%s",
@@ -351,6 +350,7 @@ static void pair_qr_command(
 cleanup:
     adb_key_destroy(key);
     adb_conn_destroy(conn);
+    adb_wireless_info_destroy(conn_info);
     adb_ctx_destroy(ctx);
 }
 

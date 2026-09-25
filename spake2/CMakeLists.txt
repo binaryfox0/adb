@@ -18,9 +18,9 @@ target_link_libraries(spake2 PRIVATE MbedTLS::mbedcrypto)
 if(SPAKE2_BUILD_TESTS)
     include(FetchContent)
 
-    set(BUILD_TESTING OFF)
-    set(BUILD_SHARED_LIBS OFF)
-    set(OPENSSL_SMALL ON)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(OPENSSL_SMALL ON CACHE BOOL "" FORCE)
     FetchContent_Declare(
         boringssl
         URL
