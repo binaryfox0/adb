@@ -1,6 +1,7 @@
 #include <adb/adb_query.h>
 #include "adb_query_priv.h"
 
+#include <stdio.h>
 #include <stdbool.h>
 
 #ifdef _WIN32

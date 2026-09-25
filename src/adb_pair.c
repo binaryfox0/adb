@@ -1,5 +1,6 @@
 #include <adb/adb_pair.h>
 
+#include <string.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -200,10 +201,10 @@ static adb_error_t adb__pair_write_packet(
 
     buffer[version_offset] = pkt->version;
     buffer[type_offset] = pkt->type;
-    buffer[plsz_offset]     = (pkt->size & 0xFF000000) >> 24;
-    buffer[plsz_offset + 1] = (pkt->size & 0x00FF0000) >> 16;
-    buffer[plsz_offset + 2] = (pkt->size & 0x0000FF00) >> 8;
-    buffer[plsz_offset + 3] = (pkt->size & 0x000000FF);
+    buffer[plsz_offset]     = (uint8_t)((pkt->size & 0xFF000000) >> 24);
+    buffer[plsz_offset + 1] = (uint8_t)((pkt->size & 0x00FF0000) >> 16);
+    buffer[plsz_offset + 2] = (uint8_t)((pkt->size & 0x0000FF00) >> 8);
+    buffer[plsz_offset + 3] = (uint8_t)((pkt->size & 0x000000FF));
 
     res = adb__conn_write(conn, buffer, sizeof(buffer));
     if(res != ADB_ERR_OK)
@@ -481,7 +482,7 @@ adb_error_t adb_pair(
     size_t guid_len = 0;
 
     if(!conn || !adb__verify_pairing_code(code) || 
-            (out_guid == 0 ^ out_guid_len == 0))
+            ((out_guid == 0) ^ (out_guid_len == 0)))
         return ADB_ERR_PARAM;
 
     ADB__INFO("pairing wireless device with code \"%6s\"", code);
@@ -548,7 +549,7 @@ static adb_error_t adb__qr_random_string(
         return ADB_ERR_CRYPTO;
 
     for(size_t i = 0; i < size; i++)
-        out[i] = charset[out[i] & 0x3FU];
+        out[i] = (uint8_t)(charset[out[i] & 0x3FU]);
 
     return ADB_ERR_OK;
 }
@@ -636,7 +637,7 @@ adb_error_t adb_pair_qr(
 
     /* we do not enforce secret len */
     if(!conn || !secret || 
-            (out_guid == 0 ^ out_guid_len == 0))
+            ((out_guid == 0) ^ (out_guid_len == 0)))
         return ADB_ERR_PARAM;
 
     ADB__INFO("pairing wireless device with secret");

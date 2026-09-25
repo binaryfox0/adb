@@ -1022,7 +1022,7 @@ mdns_socket_listen(int sock, void* buffer, size_t capacity, mdns_record_callback
 
 		uint16_t rtype = mdns_ntohs(data++);
 		uint16_t rclass = mdns_ntohs(data++);
-		uint16_t class_without_flushbit = rclass & ~MDNS_CACHE_FLUSH;
+		uint16_t class_without_flushbit = (uint16_t)(rclass & ~MDNS_CACHE_FLUSH);
 
 		// Make sure we get a question of class IN or ANY
 		if (!((class_without_flushbit == MDNS_CLASS_IN) ||
@@ -1088,11 +1088,11 @@ mdns_multiquery_send(int sock, const mdns_query_t* query, size_t count, void* bu
 		if (saddr->sa_family == AF_INET) {
             struct sockaddr_in *sin = (struct sockaddr_in*)&addr_storage;
 		    if((ntohs(sin->sin_port) == MDNS_PORT))
-    			rclass &= ~MDNS_UNICAST_RESPONSE;
+    			rclass &= (uint16_t)(~MDNS_UNICAST_RESPONSE);
         } else if (saddr->sa_family == AF_INET6) {
             struct sockaddr_in6 *sin6 = (struct sockaddr_in6*)&addr_storage;
 		    if(ntohs(sin6->sin6_port) == MDNS_PORT)
-    			rclass &= ~MDNS_UNICAST_RESPONSE;
+    			rclass &= (uint16_t)(~MDNS_UNICAST_RESPONSE);
         }
 	}
 
@@ -1304,7 +1304,7 @@ mdns_record_update_rclass_ttl(mdns_record_t* record, uint16_t rclass, uint32_t t
 	record->rclass &= (uint16_t)(MDNS_CLASS_IN | MDNS_CACHE_FLUSH);
 	// Never flush PTR record
 	if (record->type == MDNS_RECORDTYPE_PTR)
-		record->rclass &= ~(uint16_t)MDNS_CACHE_FLUSH;
+		record->rclass &= (uint16_t)(~MDNS_CACHE_FLUSH);
 }
 
 static inline void*

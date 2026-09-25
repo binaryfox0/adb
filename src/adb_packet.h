@@ -2,6 +2,7 @@
 #define ADB_MESSAGE_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <adb/adb_error.h>
 
