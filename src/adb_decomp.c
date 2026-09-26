@@ -30,6 +30,8 @@ typedef struct
 typedef struct adb__decomp
 {
     adb__decomp_type_t type;
+    adb_write_fn write_fn;
+    void *userdata;
     bool done;
     union
     {
@@ -42,9 +44,7 @@ typedef struct adb__decomp
 typedef adb_error_t (*adb__decomp_decompress_fn)(
         adb__decomp_t *decomp,
         const void *data,
-        const size_t size,
-        const adb_write_fn write_fn,
-        void *userdata);
+        const size_t size);
 
 static adb_error_t adb__decomp_brotli_init(
         adb__decomp_brotli_t *brotli)
@@ -132,12 +132,14 @@ static adb_error_t adb__decomp_zstd_init(
 
 adb_error_t adb__decomp_create(
         adb__decomp_t **decomp,
-        const adb__decomp_type_t type)
+        const adb__decomp_type_t type,
+        const adb_write_fn write_fn,
+        void *userdata)
 {
     adb__decomp_t *tmp = NULL;
     adb_error_t ret = ADB_ERR_OK;
 
-    if(!decomp || !ADB__CHECK_ENUM(type, DECOMP))
+    if(!decomp || !ADB__CHECK_ENUM(type, DECOMP) || !write_fn)
         return ADB_ERR_PARAM;
 
     tmp = adb__calloc(1, sizeof(*tmp));
@@ -158,6 +160,8 @@ adb_error_t adb__decomp_create(
     }
 
     tmp->type = type;
+    tmp->write_fn = write_fn;
+    tmp->userdata = userdata;
     *decomp = tmp;
     return ADB_ERR_OK;
 }
@@ -165,12 +169,11 @@ adb_error_t adb__decomp_create(
 static adb_error_t adb__decomp_decompress_none(
         adb__decomp_t *decomp,
         const void *data,
-        const size_t size,
-        const adb_write_fn write_fn,
-        void *userdata)
+        const size_t size)
 {
     (void)decomp;
-    int write_res = write_fn(userdata, data, size);
+    int write_res = decomp->write_fn(
+            decomp->userdata, data, size);
     if(write_res < 0)
         return (adb_error_t)-write_res;
     if((size_t)write_res != size)
@@ -181,9 +184,7 @@ static adb_error_t adb__decomp_decompress_none(
 static adb_error_t adb__decomp_decompress_brotli(
         adb__decomp_t *decomp,
         const void *data,
-        const size_t size,
-        const adb_write_fn write_fn,
-        void *userdata)
+        const size_t size)
 {
     size_t offset = 0;
     while(offset < size) 
@@ -215,10 +216,10 @@ static adb_error_t adb__decomp_decompress_brotli(
         produced = sizeof(buffer) - avail_out;
 
         offset += consumed;
-
         if(produced != 0)
         {
-            int write_res = write_fn(userdata, buffer, produced);
+            int write_res = decomp->write_fn(
+                    decomp->userdata, buffer, produced);
             if(write_res < 0)
                 return (adb_error_t)-write_res;
 
@@ -265,9 +266,7 @@ static adb_error_t adb__decomp_decompress_brotli(
 static adb_error_t adb__decomp_decompress_lz4(
         adb__decomp_t *decomp,
         const void *data,
-        const size_t size,
-        const adb_write_fn write_fn,
-        void *userdata)
+        const size_t size)
 {
     size_t offset = 0;
     while(offset < size)
@@ -300,7 +299,8 @@ static adb_error_t adb__decomp_decompress_lz4(
 
         if(produced != 0)
         {
-            int write_res = write_fn(userdata, buffer, produced);
+            int write_res = decomp->write_fn(
+                    decomp->userdata, buffer, produced);
             if(write_res < 0)
                 return (adb_error_t)-write_res;
 
@@ -327,9 +327,7 @@ static adb_error_t adb__decomp_decompress_lz4(
 static adb_error_t adb__decomp_decompress_zstd(
         adb__decomp_t *decomp,
         const void *data,
-        const size_t size,
-        const adb_write_fn write_fn,
-        void *userdata)
+        const size_t size)
 {
     ZSTD_inBuffer in = {0};
 
@@ -359,7 +357,8 @@ static adb_error_t adb__decomp_decompress_zstd(
 
         if (out.pos != 0) 
         {
-            int write_res = write_fn(userdata, buffer, out.pos);
+            int write_res = decomp->write_fn(
+                    decomp->userdata, buffer, out.pos);
             if(write_res < 0)
                 return (adb_error_t)-write_res;
 
@@ -385,9 +384,7 @@ static adb_error_t adb__decomp_decompress_zstd(
 adb_error_t adb__decomp_decompress(
         adb__decomp_t *decomp,
         const void *data,
-        const size_t size,
-        const adb_write_fn write_fn,
-        void *userdata)
+        const size_t size)
 {
     static const adb__decomp_decompress_fn funcs[ADB__DECOMP_COUNT] =
     {
@@ -397,7 +394,7 @@ adb_error_t adb__decomp_decompress(
         [ADB__DECOMP_ZSTD]   = adb__decomp_decompress_zstd
     };
     adb__decomp_decompress_fn fn = NULL;
-    if(!decomp || !data || size == 0 || !write_fn)
+    if(!decomp || !data || size == 0)
         return ADB_ERR_PARAM;
     if(decomp->done)
         return ADB_ERR_PROTOCOL;
@@ -405,7 +402,7 @@ adb_error_t adb__decomp_decompress(
     fn = funcs[decomp->type];
     if(!fn)
         return ADB_ERR_UNSUPPORTED;
-    return fn(decomp, data, size, write_fn, userdata);
+    return fn(decomp, data, size);
 }
 
 void adb__decomp_destroy(

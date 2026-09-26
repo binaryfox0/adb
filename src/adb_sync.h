@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "adb_compiler.h"
 #include "adb_conn_priv.h"
 #include "adb_packet.h"
 
@@ -25,16 +26,16 @@ typedef struct adb__sync
     bool send_ready;
 } adb__sync_t;
 
-adb_error_t adb__sync_open(
+ADB__NODISCARD adb_error_t adb__sync_open(
         adb__sync_t *sync,
         adb_conn_t *conn);
 
-adb_error_t adb__sync_write(
+ADB__NODISCARD adb_error_t adb__sync_write(
         adb__sync_t *sync,
         const void *payload,
         size_t payload_size);
 
-adb_error_t adb__sync_read(
+ADB__NODISCARD adb_error_t adb__sync_read(
         adb__sync_t *sync);
 
 adb_error_t adb__sync_handle_okay(

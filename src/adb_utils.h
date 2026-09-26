@@ -6,6 +6,7 @@
 #include <adb/adb_error.h>
 
 #define ADB__MIN(a, b) ((a) < (b) ? (a) : (b))
+#define ADB__MAX(a, b) ((a) > (b) ? (a) : (b))
 #define ADB__IN_RANGE(val, start, end) ((val) >= (start) && (val) <= (end))
 #define ADB__CHECK_ENUM(val, pref) ((val) > 0 || (val) < ADB__##pref##_COUNT)
 #define ADB__ARRSZ(arr) (sizeof((arr)) / sizeof((arr)[0]))

@@ -67,6 +67,7 @@ adb_error_t adb_pull(
 adb_error_t adb_push(
         adb_conn_t *conn,
         const char *path,
+        const uint32_t mode,
         const size_t size,
         const adb_read_fn read_fn,
         void *userdata);

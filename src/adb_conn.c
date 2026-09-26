@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include <sys/stat.h>
+
 #include <libusb.h>
 #include <mbedtls/error.h>
 #include <mbedtls/ssl.h>
@@ -22,19 +24,20 @@
 #include "adb_tls.h"
 #include "adb_str.h"
 #include "adb_decomp.h"
+#include "adb_comp.h"
 #include "adb_sync.h"
 
 #include "adb_transport_usb.h"
 #include "adb_transport_tcp.h"
 #include "adb_transport_custom.h"
 
-#define ADB__PATH_MAX                   4096
+#define ADB__PATH_MAX                   1024
 #define ADB__SUPPORTED_FEATURES \
     ADB__FEATURE_SENDRECV_V2 "," \
     ADB__FEATURE_SENDRECV_V2_ZSTD "," \
     ADB__FEATURE_SENDRECV_V2_LZ4 "," \
-    ADB__FEATURE_SENDRECV_V2_BROTLI
-
+    ADB__FEATURE_SENDRECV_V2_BROTLI "," \
+    ADB__FEATURE_DELAYED_ACK
 
 typedef enum
 {
@@ -443,6 +446,7 @@ fail:
 #define ADB__SYNC_ID_RECV_V2 ADB__CMD_ENCODE('R', 'C', 'V', '2')
 #define ADB__SYNC_ID_DONE ADB__CMD_ENCODE('D', 'O', 'N', 'E')
 #define ADB__SYNC_ID_DATA ADB__CMD_ENCODE('D', 'A', 'T', 'A')
+#define ADB__SYNC_ID_QUIT ADB__CMD_ENCODE('Q', 'U', 'I', 'T')
 
 #define ADB__SYNC_DATA_MAX (64 * 1024)
 #define ADB__INIT_DELAYED_ACK_BYTES (32 * 1024 * 1024)
@@ -453,6 +457,13 @@ typedef struct __attribute__((packed))
     uint32_t path_len;
     /* followed by `path_length` bytes of non-null terminated path */
 } adb__sync_request_t;
+
+typedef struct __attribute__((packed))
+{
+    uint32_t id;
+    uint32_t mode;
+    uint32_t flags;
+} adb__sync_send_v2_t;
 
 typedef struct __attribute__((packed)) 
 {
@@ -493,6 +504,74 @@ typedef enum
     ADB__SYNC_FLAG_ZSTD = (1 << 2)
 } adb__sync_flag_t;
 
+static adb_error_t adb__send_request(
+        adb__sync_t *sync,
+        const uint32_t id,
+        const char *path)
+{
+    size_t path_len = 0;
+    adb__sync_request_t req = {0};
+    uint8_t req_payload[sizeof(req) + ADB__PATH_MAX] = {0};
+    void *req_cursor = NULL;
+    if(!sync || !path)
+        return ADB_ERR_PARAM;
+
+    path_len = strlen(path);
+    if(path_len > ADB__PATH_MAX)
+        return ADB_ERR_TOO_LONG;
+
+    req.id = id;
+    req.path_len = (uint32_t)path_len;
+    req_cursor = adb__mempcpy(req_payload, &req, sizeof(req));
+    memcpy(req_cursor, path, path_len);
+
+    return adb__sync_write(sync, 
+            req_payload, sizeof(req) + path_len);
+}
+
+static adb_error_t adb__send_recv_v2(
+        adb__sync_t *sync,
+        const char *path,
+        const uint32_t flags)
+{ 
+    size_t path_len = 0;
+    size_t req_size = 0;
+    adb__sync_request_t req = {0};
+    adb__sync_recv_v2_t msg = {0};
+
+    uint8_t req_payload[
+            sizeof(req) +
+            ADB__PATH_MAX +
+            sizeof(msg)] = {0};
+    uint8_t *req_cursor = NULL;
+
+    if(!sync || !path)
+        return ADB_ERR_PARAM;
+
+    path_len = strlen(path);
+    if(path_len > ADB__PATH_MAX)
+        return ADB_ERR_TOO_LONG;
+    
+    req_size = sizeof(req) + path_len + sizeof(msg);
+
+    req.id = ADB__SYNC_ID_RECV_V2;
+    req.path_len = (uint32_t)path_len;
+    msg.id = ADB__SYNC_ID_RECV_V2;
+    msg.flags = flags;
+
+    req_cursor = adb__mempcpy(req_payload, &req, sizeof(req));
+    req_cursor = adb__mempcpy(req_cursor, path, path_len);
+    memcpy(req_cursor, &msg, sizeof(msg));
+    
+    return adb__sync_write(sync, 
+            req_payload, req_size);
+}
+
+static void adb__send_quit(
+        adb__sync_t *sync) {
+    (void)adb__send_request(sync, ADB__SYNC_ID_QUIT, "");
+}
+
 /* docs later: sync data header and payload can be spread across WRTN */
 static adb_error_t adb__pull_v1(
         adb_conn_t *conn,
@@ -502,21 +581,8 @@ static adb_error_t adb__pull_v1(
 {
     adb_error_t res = ADB_ERR_OK;
 
-    size_t path_len = 0;
-    size_t req_size = 0;
-
     adb__sync_t sync = {0};
     bool data_done = false;
-
-    /*
-     * ASB is Available Send Bytes, represent how many bytes does peer
-     * willing to accept before waiting for OKAY (ACK),
-     * each OKAY we sent will reset peer ASB counter to the initial
-     */
-    adb__sync_request_t req = {0};
-
-    uint8_t req_payload[sizeof(req) + ADB__PATH_MAX] = {0};
-    uint8_t *req_cursor = NULL;
 
     /* vars to track header and data across WRTE */
     size_t data_remaining = 0;
@@ -525,23 +591,11 @@ static adb_error_t adb__pull_v1(
 
     ADB__INFO("pulling file from device at \"%s\"", path);
 
-    path_len = strlen(path);
-    if(path_len > ADB__PATH_MAX)
-        return ADB_ERR_PARAM;
-
     res = adb__sync_open(&sync, conn);
     if(res != ADB_ERR_OK)
         return res;
 
-    req_size = sizeof(req) + path_len;
-    req.id = ADB__SYNC_ID_RECV_V1;
-    req.path_len = (uint32_t)path_len;
-
-    req_cursor = req_payload;
-    req_cursor = adb__mempcpy(req_cursor, &req, sizeof(req));
-    (void)adb__mempcpy(req_cursor, path, path_len);
-
-    res = adb__sync_write(&sync, req_payload, req_size);
+    res = adb__send_request(&sync, ADB__SYNC_ID_RECV_V1, path);
     if(res != ADB_ERR_OK)
         goto cleanup;
    
@@ -602,8 +656,7 @@ static adb_error_t adb__pull_v1(
             header_remaining = sizeof(header) - header_written;
             available = ADB__MIN(pkt_remaining, header_remaining);
 
-            memcpy(
-                    (uint8_t*)&header + header_written,
+            memcpy((uint8_t*)&header + header_written,
                     pkt_payload + pkt_offset,
                     available);
 
@@ -670,6 +723,7 @@ static adb_error_t adb__pull_v1(
             goto cleanup;
     }
 
+    adb__send_quit(&sync);
     ADB__INFO("pulled file from device successfully");
 
 cleanup:
@@ -694,59 +748,26 @@ static adb_error_t adb__pull_v2(
     };
 
     adb_error_t res = ADB_ERR_OK;
-
-    size_t path_len = 0;
-    size_t req_size = 0;
+    adb__sync_t sync = {0};
+    adb__decomp_t *decomp = NULL;
 
     bool data_done = false;
-
-    adb__sync_t sync = {0};
-    /*
-     * ASB is Available Send Bytes is how many bytes does peer
-     * willing to accept before waiting for OKAY (ACK)
-     */
-    adb__sync_request_t req = {0};
-    adb__sync_recv_v2_t msg = {0};
-
-    uint8_t req_payload[
-            sizeof(req) +
-            ADB__PATH_MAX +
-            sizeof(msg)] = {0};
-    uint8_t *req_cursor = NULL;
-
-    adb__decomp_t *decomp = NULL;
-    /* vars to track header and data across WRTE */
     size_t data_remaining = 0;
     size_t header_written = 0;
     adb__sync_data_t header = {0};
 
     ADB__INFO("pulling file from device at \"%s\"", path);
 
-    path_len = strlen(path);
-    if(path_len > ADB__PATH_MAX)
-        return ADB_ERR_PARAM;
-
-    req_size = sizeof(req) + path_len + sizeof(msg);
-
     res = adb__sync_open(&sync, conn);
     if(res != ADB_ERR_OK)
         return res;
-
-    req.id = ADB__SYNC_ID_RECV_V2;
-    req.path_len = (uint32_t)path_len;
-    msg.id = ADB__SYNC_ID_RECV_V2;
-    msg.flags = decomp_type_to_flags[decomp_type];
-
-    req_cursor = req_payload;
-    req_cursor = adb__mempcpy(req_cursor, &req, sizeof(req));
-    req_cursor = adb__mempcpy(req_cursor, path, path_len);
-    memcpy(req_cursor, &msg, sizeof(msg));
-
-    res = adb__sync_write(&sync, req_payload, req_size);
+   
+    res = adb__send_recv_v2(&sync, path, 
+            decomp_type_to_flags[decomp_type]);
     if(res != ADB_ERR_OK)
         return res;
    
-    res = adb__decomp_create(&decomp, decomp_type);
+    res = adb__decomp_create(&decomp, decomp_type, write_fn, userdata);
     if(res != ADB_ERR_OK)
         goto cleanup;
 
@@ -790,8 +811,7 @@ static adb_error_t adb__pull_v2(
             {
                 available = ADB__MIN(pkt_remaining, data_remaining);
                 res = adb__decomp_decompress(decomp, 
-                        pkt_payload + pkt_offset, 
-                        available, write_fn, userdata);
+                        pkt_payload + pkt_offset, available);
                 if(res != ADB_ERR_OK)
                     goto cleanup;
 
@@ -914,16 +934,85 @@ adb_error_t adb_pull(
     }
 
 }
-/*
+
+static adb_error_t adb__send_send_v2(
+        adb__sync_t *sync,
+        const char *path,
+        const uint32_t mode,
+        const uint32_t flags)
+{
+    size_t path_len = 0;
+    size_t req_size = 0;
+    adb__sync_request_t req = {0};
+    adb__sync_send_v2_t msg = {0};
+
+    uint8_t req_payload[
+            sizeof(req) +
+            ADB__PATH_MAX +
+            sizeof(msg)] = {0};
+    uint8_t *req_cursor = NULL;
+
+    if(!sync || !path)
+        return ADB_ERR_PARAM;
+
+    path_len = strlen(path);
+    if(path_len > ADB__PATH_MAX)
+        return ADB_ERR_TOO_LONG;
+    
+    req_size = sizeof(req) + path_len + sizeof(msg);
+
+    req.id = ADB__SYNC_ID_RECV_V2;
+    req.path_len = (uint32_t)path_len;
+    msg.id = ADB__SYNC_ID_RECV_V2;
+    msg.mode = mode;
+    msg.flags = flags;
+
+    req_cursor = adb__mempcpy(req_payload, &req, sizeof(req));
+    req_cursor = adb__mempcpy(req_cursor, path, path_len);
+    memcpy(req_cursor, &msg, sizeof(msg));
+    
+    return adb__sync_write(sync, 
+            req_payload, req_size);
+}
+
 adb_error_t adb_push(
         adb_conn_t *conn,
         const char *path,
+        const uint32_t mode,
         const size_t size,
         const adb_read_fn read_fn,
         void *userdata)
 {
+    adb_error_t res = ADB_ERR_OK;
+    adb__sync_t sync = {0};
+    adb__comp_t *comp = NULL;
+    uint8_t *buffer = NULL;
+    size_t remaining = 0;
+    if(!conn || !path || !read_fn)
+        return ADB_ERR_PARAM;
+    
+    res = adb__sync_open(&sync, conn);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    adb__comp_create(&comp, ADB__COMP_BROTLI, );
+    buffer = adb__malloc();
+    if(!buffer)
+        { res = ADB_ERR_NO_MEM; goto cleanup; }
+
+    remaining = size;
+    while(remaining > 0)
+    {
+    }
+
+    adb__send_quit(&sync);
+
+cleanup:
+    adb__free(buffer);
+    adb__sync_close(&sync);
+    return res;
 }
-*/
+
 void adb_conn_destroy(
         adb_conn_t *conn)
 {

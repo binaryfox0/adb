@@ -4,7 +4,9 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+
 #include <adb/adb_error.h>
+#include "adb_compiler.h"
 
 #define ADB__PACKET_MAX_SUPPORTED_VER 0x01000001
 #define ADB__PACKET_MAX_PAYLOAD_SIZE (1024 * 1024)
@@ -38,7 +40,7 @@ typedef struct
     uint32_t payload_size; /* payload size (0 is allowed) */
 } adb__packet_t;
 
-adb_error_t adb__packet_write(
+ADB__NODISCARD adb_error_t adb__packet_write(
         adb_conn_t *conn,
         const adb__packet_t *pkt,
         const void *payload);
@@ -46,7 +48,7 @@ adb_error_t adb__packet_write(
 /*
  * Read a packet and allocate a buffer to store the payload
  */
-adb_error_t adb__packet_read(
+ADB__NODISCARD adb_error_t adb__packet_read(
         adb_conn_t *conn,
         adb__packet_t *out_pkt,
         void **out_payload);
@@ -54,7 +56,7 @@ adb_error_t adb__packet_read(
 /*
  * Read a packet and store into an existing buffer
  */
-adb_error_t adb__packet_read_into(
+ADB__NODISCARD adb_error_t adb__packet_read_into(
         adb_conn_t *conn,
         adb__packet_t *out_pkt,
         void *out_payload,
