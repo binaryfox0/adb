@@ -8,9 +8,9 @@ typedef struct adb__decomp adb__decomp_t;
 typedef enum
 {
     ADB__DECOMP_NONE,
-    ADB__DECOMP_BROTLI,
-    ADB__DECOMP_LZ4,
     ADB__DECOMP_ZSTD,
+    ADB__DECOMP_LZ4,
+    ADB__DECOMP_BROTLI,
     ADB__DECOMP_COUNT
 } adb__decomp_type_t;
 

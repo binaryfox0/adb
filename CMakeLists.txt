@@ -139,6 +139,7 @@ add_library(adb
     src/adb_sock.c
     src/adb_pair.c
     src/adb_decomp.c
+    src/adb_sync.c
     src/adb_conn.c)
 target_compile_definitions(adb PRIVATE
     ZSTD_STATIC_LINKING_ONLY

@@ -55,5 +55,8 @@ bool adb__has_feature(
         adb_conn_t *conn,
         const char *feature);
 
+bool adb__feature_support(
+        const char *feature);
+
 
 #endif

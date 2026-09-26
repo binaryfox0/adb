@@ -20,6 +20,21 @@ static inline bool adb__str_is_empty(
     return !str || !str->ptr || str->len == 0;
 }
 
+static inline adb__str_t adb__str_from_cstr(
+        const char *cstr)
+{
+    size_t len = 0;
+    if(!cstr)
+        return (adb__str_t){0};
+
+    while(cstr[len] != '\0')
+        len++;
+    return (adb__str_t) {
+        .ptr = (char*)(uintptr_t)cstr,
+        .len = len
+    };
+}
+
 static inline bool adb__str_compare_cstr(
         const adb__str_t *str,
         const char *cstr)
@@ -30,7 +45,7 @@ static inline bool adb__str_compare_cstr(
     if (!cstr)
         return false;
 
-    for (; i < str->len && cstr[i] != '\0'; ++i)
+    for(; i < str->len && cstr[i] != '\0'; ++i)
     {
         if (str->ptr[i] != cstr[i])
             return false;

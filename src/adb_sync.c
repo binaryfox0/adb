@@ -13,17 +13,16 @@ adb_error_t adb__sync_open(
         adb__sync_t *sync,
         adb_conn_t *conn)
 {
-    adb_error_t res;
-
+    adb_error_t res = ADB_ERR_OK;
     if(!sync || !conn)
         return ADB_ERR_PARAM;
 
     memset(sync, 0, sizeof(*sync));
 
     sync->conn = conn;
-    sync->delayed_ack = adb__has_feature(
-            conn,
-            ADB__FEATURE_DELAYED_ACK);
+    sync->delayed_ack = 
+        adb__has_feature(conn, ADB__FEATURE_DELAYED_ACK) &&
+        adb__feature_support(ADB__FEATURE_DELAYED_ACK);
     sync->local_id = 1; /* should use a counter inside conn */
     // sync->send_ready = false;
 
@@ -33,9 +32,9 @@ adb_error_t adb__sync_open(
     sync->pkt.command = ADB__CMD_OPEN;
     sync->pkt.arg0 = sync->local_id;
     sync->pkt.arg1 = sync->delayed_ack ? ADB__INIT_DELAYED_ACK_BYTES : 0;
-    sync->pkt.payload_size = 0;
+    sync->pkt.payload_size = sizeof("sync:");
 
-    res = adb__packet_write(conn, &sync->pkt, NULL);
+    res = adb__packet_write(conn, &sync->pkt, "sync:");
     if(res != ADB_ERR_OK)
         return res;
 
@@ -205,7 +204,6 @@ adb_error_t adb__sync_handle_okay(
     } else {
         if(!adb__packet_check_size(&sync->pkt, 0))
             return ADB_ERR_PROTOCOL;
-
         sync->send_ready = true;
     }
 

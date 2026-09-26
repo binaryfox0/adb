@@ -12,6 +12,7 @@
 #define ADB__MEMSZ(s, m) (sizeof(((s*)0)->m))
 #define ADB__CONST_CAST(type, var) ((type)(uintptr_t)(var))
 #define ADB__ENUM_KEY_VALUE(val) [(val)] = #val 
+#define ADB__PTR(t, c) ((t[1]){(c)})
 
 #define ADB__STRINGIFY_IMPL(x) #x
 #define ADB__STRINGIFY(x) ADB__STRINGIFY_IMPL(x)

@@ -25,7 +25,7 @@ All the implementations show below was based on Google's ADB source code commit 
 | remount_shell | Remount support through the shell | ❌ | |
 | track_app | Track application/package changes | ❌ | |
 | sendrecv_v2_dry_run_send | Dry-run mode for send/receive v2 transfers | ❌ | |
-| delayed_ack | Delayed acknowledgement support | ❌ | |
+| delayed_ack | Delayed acknowledgement support | ⚠️ | Only recieve was fully usable |
 | openscreen_mdns | OpenScreen mDNS device discovery | ❌ | |
 | devicetracker_proto_format | Device Tracker protocol format | ❌ | |
 | devraw | Raw device communication support | ❌ | |

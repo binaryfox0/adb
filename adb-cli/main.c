@@ -254,8 +254,10 @@ static bool display_qr(
     int size = qrcodegen_getSize(qrcode);
     int border = 4;
 
-    for (int y = -border; y < size + border; y++) {
-        for (int x = -border; x < size + border; x++) {
+    for (int y = -border; y < size + border; y++) 
+    {
+        for (int x = -border; x < size + border; x++) 
+        {
 
             bool isBlack = false;
 
@@ -403,8 +405,8 @@ static void connect_command(
     }
     CHECK(adb_handshake(conn, key), 
             err, cleanup, "failed to perform handshake with %s", ip);
-    FILE *file = fopen("./Shake Na Baby.webm", "wb");
-    adb_pull(conn, "/storage/emulated/0/Download/Shake Na Baby.webm", 
+    FILE *file = fopen("./random.bin", "wb");
+    adb_pull(conn, "/storage/emulated/0/Download/random.bin", 
             write_fn, file);
     fclose(file);
 
