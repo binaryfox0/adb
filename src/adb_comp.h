@@ -22,17 +22,24 @@ ADB__NODISCARD adb_error_t adb__comp_create(
         const adb_write_fn write_fn,
         void *userdata);
 
-ADB__NODISCARD size_t adb__comp_input_bound(
-        adb__comp_t *comp,
-        const size_t out_max);
-
 ADB__NODISCARD adb_error_t adb__comp_compress(
         adb__comp_t *comp,
         const void *data,
-        const size_t size);
+        const size_t size,
+        void *output,
+        const size_t output_size,
+        size_t *input_used,
+        size_t *output_used);
 
 ADB__NODISCARD adb_error_t adb__comp_finish(
-        adb__comp_t *comp);
+        adb__comp_t *comp,
+        void *output,
+        const size_t output_size,
+        size_t *output_used);
+
+ADB__NODISCARD size_t adb__comp_input_bound(
+        adb__comp_t *comp,
+        const size_t out_max);
 
 void adb__comp_destroy(
         adb__comp_t *comp);
