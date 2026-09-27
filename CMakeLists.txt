@@ -74,6 +74,7 @@ pkg_check_modules(libusb libusb-1.0 REQUIRED IMPORTED_TARGET)
 pkg_check_modules(lz4 liblz4 REQUIRED IMPORTED_TARGET)
 pkg_check_modules(zstd libzstd REQUIRED IMPORTED_TARGET)
 pkg_check_modules(brotlidec libbrotlidec REQUIRED IMPORTED_TARGET)
+pkg_check_modules(brotlienc libbrotlienc REQUIRED IMPORTED_TARGET)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(lz4 REQUIRED IMPORTED_TARGET liblz4)
@@ -92,10 +93,13 @@ int main(void)
     (void)LZ4F_createDecompressionContext_advanced(
         (LZ4F_CustomMem){0},
         LZ4F_VERSION);
+    (void)LZ4F_createCompressionContext_advanced(
+        (LZ4F_CustomMem){0},
+        LZ4F_VERSION);
     return 0;
 }
-" HAVE_LZ4F_CREATE_DECOMPRESSION_CONTEXT_ADVANCED)
-if(NOT HAVE_LZ4F_CREATE_DECOMPRESSION_CONTEXT_ADVANCED)
+" HAVE_LZ4F_CREATE_CONTEXT_ADVANCED)
+if(NOT HAVE_LZ4F_CREATE_CONTEXT_ADVANCED)
     include(FetchContent)
 
     set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
@@ -138,8 +142,9 @@ add_library(adb
     src/adb_packet.c
     src/adb_sock.c
     src/adb_pair.c
-    src/adb_decomp.c
     src/adb_sync.c
+    src/adb_decomp.c
+    src/adb_comp.c
     src/adb_conn.c)
 target_compile_definitions(adb PRIVATE
     ZSTD_STATIC_LINKING_ONLY
@@ -154,7 +159,8 @@ target_link_libraries(adb PRIVATE
     mdns
     lz4
     PkgConfig::zstd
-    PkgConfig::brotlidec)
+    PkgConfig::brotlidec
+    PkgConfig::brotlienc)
 target_add_strict_flags(adb)
 target_add_asan(adb)
 

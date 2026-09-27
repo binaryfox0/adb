@@ -85,21 +85,21 @@ static void adb__custom_destroy(
 
 adb_error_t adb__custom_transport_create(
         adb__transport_t *transport,
-        adb_read_fn read_cb,
-        adb_write_fn write_cb,
+        const adb_read_fn read_fn,
+        const adb_write_fn write_fn,
         void *userdata)
 {
     adb__custom_transport_t *custom = NULL;
 
-    if(!transport || !read_cb || !write_cb)
+    if(!transport || !read_fn || !write_fn)
         return ADB_ERR_PARAM;
 
     custom = adb__calloc(1, sizeof(*custom));
     if(!custom)
         return ADB_ERR_NO_MEM;
 
-    custom->read = read_cb;
-    custom->write = write_cb;
+    custom->read = read_fn;
+    custom->write = write_fn;
     custom->userdata = userdata;
 
     transport->userdata = custom;

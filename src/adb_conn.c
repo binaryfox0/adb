@@ -444,6 +444,7 @@ fail:
 
 #define ADB__SYNC_ID_RECV_V1 ADB__CMD_ENCODE('R', 'E', 'C', 'V')
 #define ADB__SYNC_ID_RECV_V2 ADB__CMD_ENCODE('R', 'C', 'V', '2')
+#define ADB__SYNC_ID_SEND_V2 ADB__CMD_ENCODE('S', 'N', 'D', '2')
 #define ADB__SYNC_ID_DONE ADB__CMD_ENCODE('D', 'O', 'N', 'E')
 #define ADB__SYNC_ID_DATA ADB__CMD_ENCODE('D', 'A', 'T', 'A')
 #define ADB__SYNC_ID_QUIT ADB__CMD_ENCODE('Q', 'U', 'I', 'T')
@@ -575,7 +576,7 @@ static void adb__send_quit(
 /* docs later: sync data header and payload can be spread across WRTN */
 static adb_error_t adb__pull_v1(
         adb_conn_t *conn,
-        const char *path,
+        const char *remote_path,
         const adb_write_fn write_fn,
         void *userdata)
 {
@@ -589,13 +590,13 @@ static adb_error_t adb__pull_v1(
     size_t header_written = 0;
     adb__sync_data_t header = {0};
 
-    ADB__INFO("pulling file from device at \"%s\"", path);
+    ADB__INFO("pulling file from device at \"%s\"", remote_path);
 
     res = adb__sync_open(&sync, conn);
     if(res != ADB_ERR_OK)
         return res;
 
-    res = adb__send_request(&sync, ADB__SYNC_ID_RECV_V1, path);
+    res = adb__send_request(&sync, ADB__SYNC_ID_RECV_V1, remote_path);
     if(res != ADB_ERR_OK)
         goto cleanup;
    
@@ -734,7 +735,7 @@ cleanup:
 /* docs later: sync data header and payload can be spread across WRTN */
 static adb_error_t adb__pull_v2(
         adb_conn_t *conn,
-        const char *path,
+        const char *remote_path,
         const adb__decomp_type_t decomp_type,
         const adb_write_fn write_fn,
         void *userdata)
@@ -756,13 +757,13 @@ static adb_error_t adb__pull_v2(
     size_t header_written = 0;
     adb__sync_data_t header = {0};
 
-    ADB__INFO("pulling file from device at \"%s\"", path);
+    ADB__INFO("pulling file from device at \"%s\"", remote_path);
 
     res = adb__sync_open(&sync, conn);
     if(res != ADB_ERR_OK)
         return res;
    
-    res = adb__send_recv_v2(&sync, path, 
+    res = adb__send_recv_v2(&sync, remote_path, 
             decomp_type_to_flags[decomp_type]);
     if(res != ADB_ERR_OK)
         return res;
@@ -903,7 +904,7 @@ cleanup:
 
 adb_error_t adb_pull(
         adb_conn_t *conn,
-        const char *path,
+        const char *remote_path,
         const adb_write_fn write_fn,
         void *userdata)
 {
@@ -918,21 +919,59 @@ adb_error_t adb_pull(
         { ADB__FEATURE_SENDRECV_V2, ADB__DECOMP_NONE },
     };
 
-    if(!conn || !path || !write_fn)
+    if(!conn || !remote_path || !write_fn)
         return ADB_ERR_PARAM;
 
-    return adb__pull_v1(conn, path, write_fn, userdata);   
+    return adb__pull_v1(conn, remote_path, write_fn, userdata);   
     for(size_t i = 0; i < ADB__ARRSZ(check_orders); i++)
     {
         /* XXX: dunno it needs to try another if current failed */
         if(adb__has_feature(conn, check_orders[i].feature))
         {
-            return adb__pull_v2(conn, path, 
+            return adb__pull_v2(conn, remote_path, 
                     check_orders[i].decomp_type, 
                     write_fn, userdata);
         }
     }
 
+}
+
+static int adb__pull_file_write(
+        void *userdata,
+        const uint8_t *data,
+        const size_t size)
+{
+    /* if byte count mismatched, default err will be IO */
+    return (int)fwrite(data, 1, size, userdata);
+}
+
+adb_error_t adb_pull_file(
+        adb_conn_t *conn,
+        const char *remote_path,
+        const char *local_path)
+{
+    adb_error_t res = ADB_ERR_OK;
+    FILE *file = NULL;
+    if(!conn || !remote_path || !local_path)
+        return ADB_ERR_PARAM;
+     
+    file = fopen(local_path, "wb");
+    if(!file)
+        return ADB_ERR_IO;
+
+    res = adb_pull(conn, remote_path, 
+            adb__pull_file_write, file);
+    if(res != ADB_ERR_OK)
+        { fclose(file); goto fail; }
+
+    if(fclose(file) != 0)
+        { res = ADB_ERR_IO; goto fail; }
+    return ADB_ERR_OK;
+
+fail:
+    if(res != ADB_ERR_OK)
+        remove(local_path);
+    return res;
 }
 
 static adb_error_t adb__send_send_v2(
@@ -961,9 +1000,9 @@ static adb_error_t adb__send_send_v2(
     
     req_size = sizeof(req) + path_len + sizeof(msg);
 
-    req.id = ADB__SYNC_ID_RECV_V2;
+    req.id = ADB__SYNC_ID_SEND_V2;
     req.path_len = (uint32_t)path_len;
-    msg.id = ADB__SYNC_ID_RECV_V2;
+    msg.id = ADB__SYNC_ID_SEND_V2;
     msg.mode = mode;
     msg.flags = flags;
 
@@ -975,10 +1014,13 @@ static adb_error_t adb__send_send_v2(
             req_payload, req_size);
 }
 
+#define ADB__PUSH_IN_BUFFER_SIZE (256 * 1024)
+
 adb_error_t adb_push(
         adb_conn_t *conn,
-        const char *path,
+        const char *remote_path,
         const uint32_t mode,
+        const uint32_t modified_time,
         const size_t size,
         const adb_read_fn read_fn,
         void *userdata)
@@ -986,30 +1028,173 @@ adb_error_t adb_push(
     adb_error_t res = ADB_ERR_OK;
     adb__sync_t sync = {0};
     adb__comp_t *comp = NULL;
-    uint8_t *buffer = NULL;
     size_t remaining = 0;
-    if(!conn || !path || !read_fn)
+    uint8_t in_buf[ADB__PUSH_IN_BUFFER_SIZE] = {0};
+    if(!conn || !remote_path || !read_fn)
         return ADB_ERR_PARAM;
     
     res = adb__sync_open(&sync, conn);
     if(res != ADB_ERR_OK)
         return res;
 
-    adb__comp_create(&comp, ADB__COMP_BROTLI, );
-    buffer = adb__malloc();
-    if(!buffer)
-        { res = ADB_ERR_NO_MEM; goto cleanup; }
+    res = adb__send_send_v2(&sync, remote_path, mode, 0);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    res = adb__comp_create(&comp, ADB__COMP_NONE);
+    if(res != ADB_ERR_OK)
+        goto cleanup;
 
     remaining = size;
-    while(remaining > 0)
+    while(remaining != 0)
     {
+        size_t read_size = 0;
+        int read_res = 0;
+        size_t in_offset = 0;
+        size_t in_remaining = 0;
+
+        read_size = ADB__MIN(remaining, sizeof(in_buf));
+        read_res = read_fn(userdata, in_buf, read_size);
+        if(read_res < 0)
+        {
+            res = (adb_error_t)-read_res;
+            goto cleanup;
+        }
+
+        if((size_t)read_res != read_size)
+        {
+            res = ADB_ERR_IO;
+            goto cleanup;
+        }
+
+        in_remaining = (size_t)read_res;
+        remaining -= in_remaining;
+        while(in_remaining != 0)
+        {
+            uint8_t data_pkt[sizeof(adb__sync_data_t) + ADB__SYNC_DATA_MAX] = {0};
+            size_t in_used = 0;
+            size_t out_used = 0;
+            
+            res = adb__comp_compress(
+                    comp,
+                    in_buf + in_offset,
+                    in_remaining,
+                    data_pkt + sizeof(adb__sync_data_t),
+                    sizeof(data_pkt) - sizeof(adb__sync_data_t),
+                    &in_used,
+                    &out_used);
+            if(res != ADB_ERR_OK)
+                goto cleanup;
+
+            if(out_used != 0)
+            {
+                adb__sync_data_t *data = (adb__sync_data_t*)data_pkt;
+                data->id = ADB__SYNC_ID_DATA;
+                data->size = (uint32_t)out_used;
+
+                res = adb__sync_write(
+                        &sync,
+                        data_pkt,
+                        sizeof(adb__sync_data_t) + out_used);
+                if(res != ADB_ERR_OK)
+                    goto cleanup;
+    adb__packet_t pkt = {0};
+    uint8_t *pkt_data = NULL;
+    (void)adb__packet_read(conn, &pkt, (void**)&pkt_data);
+    
+            }
+
+            if(in_used == 0 && out_used == 0)
+            {
+                res = ADB_ERR_COMPRESS;
+                goto cleanup;
+            }
+
+            in_offset += in_used;
+            in_remaining -= in_used;
+        }
+    }
+    
+    while(!adb__comp_is_done(comp))
+    {
+        uint8_t data_pkt[sizeof(adb__sync_data_t) + ADB__SYNC_DATA_MAX] = {0};
+        size_t out_used = 0;
+        res = adb__comp_finish(
+                comp,
+                data_pkt + sizeof(adb__sync_data_t),
+                sizeof(data_pkt) - sizeof(adb__sync_data_t),
+                &out_used);
+        if(res != ADB_ERR_OK)
+            goto cleanup;
+
+        if(out_used != 0)
+        {
+            adb__sync_data_t *data = (adb__sync_data_t*)data_pkt;
+            data->id = ADB__SYNC_ID_DATA;
+            data->size = (uint32_t)out_used;
+
+            res = adb__sync_write(
+                    &sync,
+                    data_pkt,
+                    sizeof(adb__sync_data_t) + out_used);
+            if(res != ADB_ERR_OK)
+                goto cleanup;
+    adb__packet_t pkt = {0};
+    uint8_t *pkt_data = NULL;
+    (void)adb__packet_read(conn, &pkt, (void**)&pkt_data);
+    
+        }
+    }
+    {
+        adb__sync_data_t done = {0};
+        done.id = ADB__SYNC_ID_DONE;
+        done.size = modified_time;
+        res = adb__sync_write(
+                &sync,
+                &done,
+                sizeof(done));
+        if(res != ADB_ERR_OK)
+            goto cleanup;
     }
 
     adb__send_quit(&sync);
 
 cleanup:
-    adb__free(buffer);
     adb__sync_close(&sync);
+    return res;
+}
+
+static int adb__push_file_read(
+        void *userdata,
+        uint8_t *out,
+        const size_t size)
+{
+    /* if byte count mismatched, default err will be IO */
+    return (int)fread(out, 1, size, userdata);
+}
+adb_error_t adb_push_file(
+        adb_conn_t *conn,
+        const char *local_path,
+        const char *remote_path)
+{
+    adb_error_t res = ADB_ERR_OK;
+    struct stat st = {0};
+    FILE *file = NULL;
+    if(!conn || !local_path || !remote_path)
+        return ADB_ERR_PARAM;
+
+    stat(local_path, &st);
+    // TODO check stat err
+     
+    file = fopen(local_path, "rb");
+    if(!file)
+        return ADB_ERR_IO;
+
+    res = adb_push(conn, remote_path, 
+            st.st_mode, (uint32_t)st.st_mtim.tv_sec, 
+            (size_t)st.st_size,
+            adb__push_file_read, file);
+    fclose(file);
     return res;
 }
 

@@ -14,7 +14,7 @@ All the implementations show below was based on Google's ADB source code commit 
 | push_sync | Push synchronization support | ❌ | |
 | apex | APEX package support | ❌ | |
 | ls_v2 | File listing protocol version 2 | ❌ | |
-| sendrecv_v2 | File transfer protocol version 2 | ⚠️ | Only receive was fully usable |
+| sendrecv_v2 | File transfer protocol version 2 | ⚠️ | Send is noe working temporarily with memory leak. Delayed ACK is still unsupported |
 | sendrecv_v2_brotli | File transfer v2 with Brotli compression | ⚠️ | Only receive was fully usable |
 | sendrecv_v2_lz4 | File transfer v2 with LZ4 compression | ⚠️ | Only receive was fully usable |
 | sendrecv_v2_zstd | File transfer v2 with Zstandard compression | ⚠️ | Only receive was fully usable |

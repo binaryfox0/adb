@@ -37,8 +37,6 @@ typedef struct
 typedef struct adb__comp
 {
     adb__comp_type_t type;
-    adb_write_fn write_fn;
-    void *userdata;
     bool done;
     union
     {
@@ -177,14 +175,12 @@ static adb_error_t adb__comp_zstd_init(
 
 adb_error_t adb__comp_create(
         adb__comp_t **comp,
-        const adb__comp_type_t type,
-        const adb_write_fn write_fn,
-        void *userdata)
+        const adb__comp_type_t type)
 {
     adb__comp_t *tmp = NULL;
     adb_error_t ret = ADB_ERR_OK;
 
-    if(!comp || !ADB__CHECK_ENUM(type, COMP) || !write_fn)
+    if(!comp || !ADB__CHECK_ENUM(type, COMP))
         return ADB_ERR_PARAM;
 
     tmp = adb__calloc(1, sizeof(*tmp));
@@ -205,8 +201,6 @@ adb_error_t adb__comp_create(
     }
 
     tmp->type = type;
-    tmp->write_fn = write_fn;
-    tmp->userdata = userdata;
     *comp = tmp;
 
     return ADB_ERR_OK;
@@ -239,6 +233,30 @@ static adb_error_t adb__comp_compress_none(
     return ADB_ERR_OK;
 }
 
+static size_t adb__comp_input_bound_lz4(
+        size_t output_size)
+{
+    size_t low = 0;
+    size_t high = output_size;
+    size_t middle = 0;
+    size_t bound = 0;
+
+    if(LZ4F_compressBound(0, NULL) > output_size)
+        return 0;
+
+    while(low < high)
+    {
+        middle = low + (high - low + 1) / 2;
+        bound = LZ4F_compressBound(middle, NULL);
+
+        if(bound <= output_size)
+            low = middle;
+        else
+            high = middle - 1;
+    }
+
+    return low;
+}
 
 static adb_error_t adb__comp_compress_lz4(
         adb__comp_t *comp,
@@ -285,7 +303,7 @@ static adb_error_t adb__comp_compress_lz4(
     {
         available = output_size - *output_used;
 
-        input_bound = adb__comp_input_bound(comp, available);
+        input_bound = adb__comp_input_bound_lz4(available);
         if(input_bound == 0)
             break;
 
@@ -459,30 +477,31 @@ adb_error_t adb__comp_compress(
     if(ret != ADB_ERR_OK)
         return ret;
 
-    comp->done = true;
     return ADB_ERR_OK;
 }
 
 static adb_error_t adb__comp_finish_none(
         adb__comp_t *comp,
         void *output,
-        size_t output_size,
+        const size_t output_size,
         size_t *output_used)
 {
-    (void)comp;
     (void)output;
     (void)output_size;
-    if(!output_used)
+
+    if(!comp || !output_used)
         return ADB_ERR_PARAM;
 
     *output_used = 0;
+    comp->done = true;
+
     return ADB_ERR_OK;
 }
 
 static adb_error_t adb__comp_finish_lz4(
         adb__comp_t *comp,
         void *output,
-        size_t output_size,
+        const size_t output_size,
         size_t *output_used)
 {
     uint8_t *out = NULL;
@@ -491,13 +510,14 @@ static adb_error_t adb__comp_finish_lz4(
 
     if(!comp || !output || !output_used)
         return ADB_ERR_PARAM;
+    if(*output_used > output_size)
+        return ADB_ERR_PARAM;
 
     out = (uint8_t *)output;
-
     if(!comp->lz4.started)
     {
-        if(*output_used >= output_size)
-            return ADB_ERR_OK;
+        if(output_size - *output_used < LZ4F_HEADER_SIZE_MAX)
+            return ADB_ERR_COMPRESS;
 
         compressed_size = LZ4F_compressBegin(
                 comp->lz4.ctx,
@@ -508,7 +528,8 @@ static adb_error_t adb__comp_finish_lz4(
         if(LZ4F_isError(compressed_size))
         {
             ADB__ERROR("failed to start lz4 compression");
-            ADB__INFO("reason: %s",
+            ADB__INFO(
+                    "reason: %s",
                     LZ4F_getErrorName(compressed_size));
             return ADB_ERR_COMPRESS;
         }
@@ -518,8 +539,8 @@ static adb_error_t adb__comp_finish_lz4(
     }
 
     available = output_size - *output_used;
-    if(available == 0)
-        return ADB_ERR_OK;
+    if(available < LZ4F_compressBound(0, NULL))
+        return ADB_ERR_COMPRESS;
 
     compressed_size = LZ4F_compressEnd(
             comp->lz4.ctx,
@@ -530,22 +551,21 @@ static adb_error_t adb__comp_finish_lz4(
     if(LZ4F_isError(compressed_size))
     {
         ADB__ERROR("failed to finish lz4 compression");
-        ADB__INFO("reason: %s",
+        ADB__INFO(
+                "reason: %s",
                 LZ4F_getErrorName(compressed_size));
         return ADB_ERR_COMPRESS;
     }
 
     *output_used += compressed_size;
     comp->done = true;
-
     return ADB_ERR_OK;
 }
-
 
 static adb_error_t adb__comp_finish_zstd(
         adb__comp_t *comp,
         void *output,
-        size_t output_size,
+        const size_t output_size,
         size_t *output_used)
 {
     ZSTD_inBuffer in = {0};
@@ -554,6 +574,8 @@ static adb_error_t adb__comp_finish_zstd(
     size_t old_out_pos = 0;
 
     if(!comp || !output || !output_used)
+        return ADB_ERR_PARAM;
+    if(*output_used > output_size)
         return ADB_ERR_PARAM;
 
     while(!comp->done)
@@ -576,12 +598,13 @@ static adb_error_t adb__comp_finish_zstd(
         if(ZSTD_isError(err))
         {
             ADB__ERROR("failed to finish zstd compression");
-            ADB__INFO("reason: %s", ZSTD_getErrorName(err));
+            ADB__INFO(
+                    "reason: %s",
+                    ZSTD_getErrorName(err));
             return ADB_ERR_COMPRESS;
         }
 
         *output_used += out.pos;
-
         if(err == 0)
         {
             comp->done = true;
@@ -595,11 +618,10 @@ static adb_error_t adb__comp_finish_zstd(
     return ADB_ERR_OK;
 }
 
-
 static adb_error_t adb__comp_finish_brotli(
         adb__comp_t *comp,
         void *output,
-        size_t output_size,
+        const size_t output_size,
         size_t *output_used)
 {
     size_t avail_in = 0;
@@ -609,6 +631,8 @@ static adb_error_t adb__comp_finish_brotli(
     uint8_t *output_ptr = NULL;
 
     if(!comp || !output || !output_used)
+        return ADB_ERR_PARAM;
+    if(*output_used > output_size)
         return ADB_ERR_PARAM;
 
     while(!BrotliEncoderIsFinished(comp->brotli.state))
@@ -628,7 +652,6 @@ static adb_error_t adb__comp_finish_brotli(
                     &output_ptr,
                     NULL) == BROTLI_FALSE)
         {
-            
             ADB__ERROR("failed to finish brotli compression");
             return ADB_ERR_COMPRESS;
         }
@@ -664,7 +687,9 @@ adb_error_t adb__comp_finish(
 
     adb__comp_finish_fn fn = NULL;
     adb_error_t ret = ADB_ERR_OK;
-    if(!comp)
+
+    if(!comp || !output_used ||
+            (output_size != 0 && !output))
         return ADB_ERR_PARAM;
     if(comp->done)
         return ADB_ERR_PROTOCOL;
@@ -673,14 +698,23 @@ adb_error_t adb__comp_finish(
     if(!fn)
         return ADB_ERR_UNSUPPORTED;
 
-    ret = fn(comp, output, output_size, output_used);
+    ret = fn(
+            comp,
+            output,
+            output_size,
+            output_used);
+
     if(ret != ADB_ERR_OK)
         return ret;
 
-    comp->done = true;
     return ADB_ERR_OK;
 }
 
+bool adb__comp_is_done(
+        adb__comp_t *comp)
+{
+    return comp ? comp->done : false;
+}
 
 void adb__comp_destroy(
         adb__comp_t *comp)

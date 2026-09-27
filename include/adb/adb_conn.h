@@ -1,6 +1,7 @@
 #ifndef ADB_CONN_H
 #define ADB_CONN_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <adb/adb_error.h>
@@ -48,11 +49,10 @@ adb_error_t adb_conn_create_wireless_from_info(
 adb_error_t adb_conn_create_custom(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
-        const adb_read_fn read_cb,
-        const adb_write_fn write_cb,
+        const adb_read_fn read_fn,
+        const adb_write_fn write_fn,
         void *userdata,
         const adb_conn_profile_t profile);
-
 
 adb_error_t adb_handshake(
         adb_conn_t *conn,
@@ -60,17 +60,28 @@ adb_error_t adb_handshake(
 
 adb_error_t adb_pull(
         adb_conn_t *conn,
-        const char *path,
+        const char *remote_path,
         const adb_write_fn write_fn,
         void *userdata);
 
+adb_error_t adb_pull_file(
+        adb_conn_t *conn,
+        const char *remote_path,
+        const char *local_path);
+
 adb_error_t adb_push(
         adb_conn_t *conn,
-        const char *path,
+        const char *remote_path,
         const uint32_t mode,
+        const uint32_t modified_time,
         const size_t size,
         const adb_read_fn read_fn,
         void *userdata);
+
+adb_error_t adb_push_file(
+        adb_conn_t *conn,
+        const char *local_path,
+        const char *remote_path);
 
 void adb_conn_destroy(
         adb_conn_t *conn);

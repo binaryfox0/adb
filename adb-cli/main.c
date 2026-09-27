@@ -356,14 +356,6 @@ cleanup:
     adb_ctx_destroy(ctx);
 }
 
-static int write_fn(
-        void *userdata,
-        const uint8_t *buf,
-        size_t size)
-{
-    return (int)fwrite(buf, 1, size, userdata);
-}
-
 static void connect_command(
         const aparse_arg *args,
         void *param)
@@ -405,10 +397,9 @@ static void connect_command(
     }
     CHECK(adb_handshake(conn, key), 
             err, cleanup, "failed to perform handshake with %s", ip);
-    FILE *file = fopen("./random.bin", "wb");
-    adb_pull(conn, "/storage/emulated/0/Download/random.bin", 
-            write_fn, file);
-    fclose(file);
+    adb_push_file(conn, 
+            "/storage/emulated/0/Download/f2e24d563e0b5f624c17e9596309c740.jpg",
+            "/storage/emulated/0/Download/abc.jpg");
 
 cleanup:
     adb_key_destroy(key);

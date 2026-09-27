@@ -36,10 +36,6 @@ void adb__transport_destroy(
 
     if(transport->destroy)
         transport->destroy(transport->userdata);
-
-    transport->userdata = NULL;
-    transport->read = NULL;
-    transport->write = NULL;
-    transport->destroy = NULL;
+    *transport = (adb__transport_t){0};
 }
 
