@@ -186,6 +186,7 @@ adb_error_t adb_conn_create_custom(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
         const adb_read_fn read_cb,
+        const adb_read_timeout_fn read_timeout_fn,
         const adb_write_fn write_cb,
         void *userdata,
         const adb_conn_profile_t profile)

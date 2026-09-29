@@ -1,6 +1,7 @@
 #ifndef ADB_TRANSPORT_H
 #define ADB_TRANSPORT_H
 
+#include <stdint.h>
 #include <stddef.h>
 #include <adb/adb_error.h>
 
@@ -8,6 +9,12 @@ typedef adb_error_t (*adb__transport_read_fn)(
         void *userdata,
         void *buf,
         const size_t size);
+
+typedef adb_error_t (*adb__transport_read_timeout_fn)(
+        void *userdata,
+        void *buf,
+        const size_t size,
+        const uint32_t timeout);
 
 typedef adb_error_t (*adb__transport_write_fn)(
         void *userdata,
@@ -22,6 +29,7 @@ typedef struct adb__transport
     void *userdata;
 
     adb__transport_read_fn read;
+    adb__transport_read_timeout_fn read_timeout;
     adb__transport_write_fn write;
     adb__transport_destroy_fn destroy;
 } adb__transport_t;

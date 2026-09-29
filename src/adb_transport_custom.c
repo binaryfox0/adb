@@ -6,6 +6,7 @@
 typedef struct
 {
     adb_read_fn read;
+    adb_read_timeout_fn read_timeout;
     adb_write_fn write;
     void *userdata;
 } adb__custom_transport_t;
@@ -13,7 +14,7 @@ typedef struct
 static adb_error_t adb__custom_read(
         void *userdata,
         void *buf,
-        size_t size)
+        const size_t size)
 {
     adb__custom_transport_t *custom = userdata;
     int ret = 0;
@@ -25,26 +26,51 @@ static adb_error_t adb__custom_read(
 
     ret = custom->read(
             custom->userdata,
-            buf,
-            size);
+            buf, size);
 
     if(ret < 0)
         return (adb_error_t)(-ret);
-
     if(ret == 0)
         return ADB_ERR_DISCONNECTED;
-
     if((size_t)ret != size)
         return ADB_ERR_IO;
 
     return ADB_ERR_OK;
 }
 
+static adb_error_t adb__custom_read_timeout(
+        void *userdata,
+        void *buf,
+        const size_t size,
+        const uint32_t timeout)
+{
+    adb__custom_transport_t *custom = userdata;
+    int ret = 0;
+    if(!custom || !custom->read)
+        return ADB_ERR_PARAM;
+
+    if(!buf && size)
+        return ADB_ERR_PARAM;
+
+    ret = custom->read_timeout(
+            custom->userdata,
+            buf, size,
+            timeout);
+
+    if(ret < 0)
+        return (adb_error_t)(-ret);
+    if(ret == 0)
+        return ADB_ERR_DISCONNECTED;
+    if((size_t)ret != size)
+        return ADB_ERR_IO;
+
+    return ADB_ERR_OK;
+}
 
 static adb_error_t adb__custom_write(
         void *userdata,
         const void *buf,
-        size_t size)
+        const size_t size)
 {
     adb__custom_transport_t *custom = userdata;
     int ret = 0;
@@ -56,15 +82,12 @@ static adb_error_t adb__custom_write(
 
     ret = custom->write(
             custom->userdata,
-            buf,
-            size);
+            buf, size);
 
     if(ret < 0)
         return (adb_error_t)(-ret);
-
     if(ret == 0 && size != 0)
         return ADB_ERR_DISCONNECTED;
-
     if((size_t)ret != size)
         return ADB_ERR_IO;
 
@@ -86,11 +109,11 @@ static void adb__custom_destroy(
 adb_error_t adb__custom_transport_create(
         adb__transport_t *transport,
         const adb_read_fn read_fn,
+        const adb_read_timeout_fn read_timeout_fn,
         const adb_write_fn write_fn,
         void *userdata)
 {
     adb__custom_transport_t *custom = NULL;
-
     if(!transport || !read_fn || !write_fn)
         return ADB_ERR_PARAM;
 
@@ -99,11 +122,13 @@ adb_error_t adb__custom_transport_create(
         return ADB_ERR_NO_MEM;
 
     custom->read = read_fn;
+    custom->read_timeout = read_timeout_fn;
     custom->write = write_fn;
     custom->userdata = userdata;
 
     transport->userdata = custom;
     transport->read = adb__custom_read;
+    transport->read_timeout = adb__custom_read_timeout;
     transport->write = adb__custom_write;
     transport->destroy = adb__custom_destroy;
 

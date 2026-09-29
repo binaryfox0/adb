@@ -41,4 +41,6 @@ adb_error_t adb__util_write_file(
         const uint8_t *buf,
         const size_t size);
 
+uint64_t adb__util_monotonic_ms(void);
+
 #endif

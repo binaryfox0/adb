@@ -1,6 +1,12 @@
 #include "adb_utils.h"
 
 #include <stdio.h>
+
+#ifdef _WIN32
+#   include <windows.h>
+#else
+#   include <time.h>
+#endif
 #include "adb_alloc_priv.h"
 
 adb_error_t adb__util_read_file(
@@ -67,3 +73,20 @@ adb_error_t adb__util_write_file(
     fclose(file);
     return ADB_ERR_OK;
 }
+
+#if defined(_WIN32)
+uint64_t adb__util_monotonic_ms(void)
+{
+    return (uint64_t)GetTickCount64();
+}
+#else
+uint64_t adb__util_monotonic_ms(void)
+{
+    struct timespec timestamp = {0};
+    if(clock_gettime(CLOCK_MONOTONIC, &timestamp) != 0)
+        return 0;
+
+    return (uint64_t)timestamp.tv_sec * UINT64_C(1000) +
+           (uint64_t)timestamp.tv_nsec / UINT64_C(1000000);
+}
+#endif
