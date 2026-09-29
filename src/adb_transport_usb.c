@@ -18,17 +18,14 @@ typedef struct
     uint8_t interface_number;
 } adb__usb_transport_t;
 
-
 static adb_error_t adb__usb_read(
         void *userdata,
         void *buf,
         size_t size)
 {
     adb__usb_transport_t *usb = userdata;
-
     int transferred = 0;
     int ret = 0;
-
     if(!usb || (!buf && size))
         return ADB_ERR_PARAM;
 
@@ -52,6 +49,37 @@ static adb_error_t adb__usb_read(
     return ADB_ERR_OK;
 }
 
+static adb_error_t adb__usb_read_timeout(
+        void *userdata,
+        void *buf,
+        const size_t size,
+        const uint32_t timeout_ms)
+{
+    adb__usb_transport_t *usb = userdata;
+    int transferred = 0;
+    int ret = 0;
+    if(!usb || (!buf && size))
+        return ADB_ERR_PARAM;
+
+    if(size > INT_MAX)
+        return ADB_ERR_PARAM;
+
+    ret = libusb_bulk_transfer(
+            usb->handle,
+            usb->read_ep,
+            buf,
+            (int)size,
+            &transferred,
+            timeout_ms);
+
+    if(ret != LIBUSB_SUCCESS)
+        return adb__error_from_libusb(ret);
+
+    if(transferred != (int)size)
+        return ADB_ERR_IO;
+
+    return ADB_ERR_OK;
+}
 
 static adb_error_t adb__usb_write(
         void *userdata,
@@ -152,6 +180,7 @@ adb_error_t adb__usb_transport_create(
 
     transport->userdata = usb;
     transport->read = adb__usb_read;
+    transport->read_timeout = adb__usb_read_timeout;
     transport->write = adb__usb_write;
     transport->destroy = adb__usb_destroy;
 

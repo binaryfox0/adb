@@ -3,25 +3,34 @@
 
 #include <stdio.h>
 #include <string.h>
-
 #include <errno.h>
+
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 
 #include "adb_alloc_priv.h"
 #include "adb_error_priv.h"
 #include "adb_log_priv.h"
+#include "adb_queue.h"
+#include "adb_utils.h"
 
 #define ADB__TCP_KEEPALIVE_INTERVAL 1
 #define ADB__TCP_KEEPCNT 10
+
+typedef struct
+{
+    int fd;
+    adb__queue_t *queue;
+} adb__tcp_transport_t;
 
 static adb_error_t adb__tcp_read(
         void *userdata,
         void *buf,
         size_t size)
 {
-    int fd = (int)(uintptr_t)userdata;
+    int fd = ((adb__tcp_transport_t*)userdata)->fd;
     uint8_t *data = buf;
     size_t offset = 0;
     ssize_t ret = 0;
@@ -35,18 +44,8 @@ static adb_error_t adb__tcp_read(
     while(offset < size)
     {
         ret = recv(fd, data + offset, size - offset, 0);
-
         if(ret < 0)
-        {
-            if(errno == EAGAIN)
-                return ADB_ERR_TIMEOUT;
-#if EWOULDBLOCK != EAGAIN
-            if(errno == EWOULDBLOCK)
-                return ADB_ERR_TIMEOUT;
-#endif
             return adb__error_from_errno(errno);
-        }
-
         if(ret == 0)
             return ADB_ERR_DISCONNECTED;
 
@@ -56,13 +55,96 @@ static adb_error_t adb__tcp_read(
     return ADB_ERR_OK;
 }
 
+/*
+ * Read with timeout, with the timeout applied for all transfers,
+ * not per each transfer. Using a queue to queue data if it 
+ * does not reach the amount of data we need 
+ */
+static adb_error_t adb__tcp_read_timeout(
+        void *userdata,
+        void *buf,
+        const size_t size,
+        const uint32_t timeout_ms)
+{
+    int fd = ((adb__tcp_transport_t*)userdata)->fd;
+    adb__queue_t *queue = ((adb__tcp_transport_t*)userdata)->queue;
+    uint64_t deadline = 0;
+    uint64_t now = 0;
+    uint64_t remaining = 0;
+    size_t available = 0;
+    size_t recv_size = 0;
+    ssize_t ret = 0;
+    struct pollfd pfd = {0};
+    int poll_timeout = 0;
+    int poll_ret = 0;
+    uint8_t temp[4096];
+
+    if(!queue || !buf || size == 0)
+        return ADB_ERR_PARAM;
+
+    deadline = adb__util_monotonic_ms() + timeout_ms;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    for(;;)
+    {
+        available = adb__queue_size(queue);
+        if(available >= size)
+        {
+            adb__queue_pop(queue, buf, size);
+            return ADB_ERR_OK;
+        }
+
+        now = adb__util_monotonic_ms();
+        if(now >= deadline)
+            return ADB_ERR_TIMEOUT;
+
+        remaining = deadline - now;
+        if(remaining > INT_MAX)
+            poll_timeout = INT_MAX;
+        else
+            poll_timeout = (int)remaining;
+
+        poll_ret = poll(&pfd, 1, poll_timeout);
+        if(poll_ret < 0)
+        {
+            if(errno == EINTR)
+                continue;
+            return ADB_ERR_IO;
+        }
+
+        if(poll_ret == 0)
+            return ADB_ERR_TIMEOUT;
+
+        if((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+            return ADB_ERR_IO;
+
+        ret = recv(fd, temp, sizeof(temp), 0);
+        if(ret > 0)
+        {
+            recv_size = (size_t)ret;
+            adb_error_t res = adb__queue_push(
+                    queue, 
+                    temp, recv_size);
+            if(res != ADB_ERR_OK)
+                return res;
+            continue;
+        }
+
+        if(ret == 0)
+            return ADB_ERR_DISCONNECTED;
+        if(errno == EINTR)
+            continue;
+
+        return ADB_ERR_IO;
+    }
+}
 
 static adb_error_t adb__tcp_write(
         void *userdata,
         const void *buf,
-        size_t size)
+        const size_t size)
 {
-    int fd = (int)(uintptr_t)userdata;
+    int fd = ((adb__tcp_transport_t*)userdata)->fd;
     const uint8_t *data = buf;
     size_t offset = 0;
     ssize_t ret = 0;
@@ -76,18 +158,8 @@ static adb_error_t adb__tcp_write(
     while(offset < size)
     {
         ret = send(fd, data + offset, size - offset, 0);
-
         if(ret < 0)
-        {
-            if(errno == EAGAIN)
-                return ADB_ERR_TIMEOUT;
-#if EWOULDBLOCK != EAGAIN
-            if(errno == EWOULDBLOCK)
-                return ADB_ERR_TIMEOUT;
-#endif
             return adb__error_from_errno(errno);
-        }
-
         if(ret == 0)
             return ADB_ERR_DISCONNECTED;
 
@@ -98,15 +170,18 @@ static adb_error_t adb__tcp_write(
 }
 
 
+static void adb__tcp_destroy_fd(
+        const int fd);
 static void adb__tcp_destroy(
         void *userdata)
 {
-    int fd = (int)(uintptr_t)userdata;
-    if(fd >= 0)
-    {
-        shutdown(fd, SHUT_RDWR);
-        close(fd);
-    }
+    adb__tcp_transport_t *tcp = userdata;
+    if(!tcp)
+        return;
+
+    adb__tcp_destroy_fd(tcp->fd);
+    adb__queue_destroy(tcp->queue);
+    adb__free(tcp);
 }
 
 static socklen_t adb__addrlen_from_addr(
@@ -124,14 +199,11 @@ static const char *adb__addr_to_string(
         const struct sockaddr *addr)
 {
     static _Thread_local char buffer[INET6_ADDRSTRLEN + 8];
-
     char host[INET6_ADDRSTRLEN] = {0};
     uint16_t port = 0;
-
     if(!addr)
         return NULL;
 
-    
     if(adb__sockaddr_get_host(addr, 
                 host, sizeof(host)) != ADB_ERR_OK)
         return NULL;
@@ -186,16 +258,16 @@ fail:
     return false;
 }
 
-adb_error_t adb__tcp_transport_create(
-        adb__transport_t *transport,
-        const struct sockaddr *addr)
+static adb_error_t adb__tcp_create_fd(
+        const struct sockaddr *addr,
+        int *out_fd)
 {
-    adb_error_t ret = ADB_ERR_OK;
+    adb_error_t res = ADB_ERR_OK;
     socklen_t addrlen = 0;
     int sock = -1;
     int err = 0;
-
-    if(!transport || !addr)
+    
+    if(!addr || !out_fd)
         return ADB_ERR_PARAM;
 
     addrlen = adb__addrlen_from_addr(addr);
@@ -216,29 +288,68 @@ adb_error_t adb__tcp_transport_create(
 
     if(sock < 0)
     {
-        ADB__ERROR("failed to create socket for %s", adb__addr_to_string(addr));
-        ADB__INFO("reason: %s", strerror(errno));
-        ret = adb__error_from_errno(errno);
+        adb__log_err_errno("failed to create socket for %s", 
+                adb__addr_to_string(addr));
+        res = adb__error_from_errno(errno);
         goto fail;
     }
 
     if(!adb__tcp_set_sockopts(sock))
     {
-        ret = ADB_ERR_NETWORK;
+        res = ADB_ERR_NETWORK;
         goto fail;
     }
 
     err = connect(sock, addr, addrlen);
     if(err < 0)
     {
-        ADB__ERROR("failed to connect to %s", adb__addr_to_string(addr));
-        ADB__INFO("reason: %s", strerror(errno));
-        ret = adb__error_from_errno(errno);
+        adb__log_err_errno("failed to connect to %s", 
+                adb__addr_to_string(addr));
+        res = adb__error_from_errno(errno);
         goto fail;
     }
 
-    transport->userdata = (void*)(uintptr_t)sock;
+    *out_fd = sock;
+    return ADB_ERR_OK;
+
+fail:
+    adb__tcp_destroy_fd(sock);
+    return res;
+}
+
+static void adb__tcp_destroy_fd(
+        const int fd)
+{
+    if(fd >= 0)
+    {
+        shutdown(fd, SHUT_RDWR);
+        close(fd);
+    }
+}
+
+adb_error_t adb__tcp_transport_create(
+        adb__transport_t *transport,
+        const struct sockaddr *addr)
+{
+    adb_error_t res = ADB_ERR_OK;
+    adb__tcp_transport_t *tcp = NULL;
+    if(!transport || !addr)
+        return ADB_ERR_PARAM;
+
+    tcp = adb__calloc(1, sizeof(*tcp));
+    if(!tcp)
+        return ADB_ERR_NO_MEM;
+
+    res = adb__tcp_create_fd(addr, &tcp->fd);
+    if(res != ADB_ERR_OK)
+        goto fail;
+    tcp->queue = adb__queue_create();
+    if(!tcp->queue)
+        { res = ADB_ERR_NO_MEM; goto fail; }
+
+    transport->userdata = tcp;
     transport->read = adb__tcp_read;
+    transport->read_timeout = adb__tcp_read_timeout;
     transport->write = adb__tcp_write;
     transport->destroy = adb__tcp_destroy;
 
@@ -248,12 +359,8 @@ adb_error_t adb__tcp_transport_create(
     return ADB_ERR_OK;
 
 fail:
-    if(sock >= 0)
-    {
-        shutdown(sock, SHUT_RDWR);
-        close(sock);
-    }
-    return ret;
+    adb__tcp_destroy(tcp);
+    return res;
 }
 
 bool adb__tcp_sockaddr_from_host_port(

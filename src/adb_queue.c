@@ -63,64 +63,57 @@ adb__queue_t *adb__queue_create(void) {
     return adb__calloc(1, sizeof(adb__queue_t));
 }
 
-void adb__queue_destroy(adb__queue_t *queue)
+void adb__queue_destroy(
+        adb__queue_t *queue)
 {
     if(!queue)
         return;
 
-    free(queue->data);
-    free(queue);
+    adb__free(queue->data);
+    adb__free(queue);
 }
 
-bool adb__queue_write(
+adb_error_t adb__queue_push(
         adb__queue_t *queue,
         const void *data,
         size_t size)
 {
     if(!queue || (!data && size != 0))
-        return false;
-
+        return ADB_ERR_PARAM;
     if(size == 0)
-        return true;
+        return ADB_ERR_OK;
 
     if(!adb__queue_reserve(queue, size))
-        return false;
+        return ADB_ERR_NO_MEM;
 
     memcpy(queue->data + queue->offset + queue->size,
             data, size);
     queue->size += size;
-    return true;
+    return ADB_ERR_OK;
 }
 
-size_t adb__queue_read(
+adb_error_t adb__queue_pop(
         adb__queue_t *queue,
         void *data,
         size_t size)
 {
     size_t read_size = 0;
     if(!queue || (!data && size != 0))
-        return 0;
-
+        return ADB_ERR_PARAM;
     if(size == 0 || queue->size == 0)
-        return 0;
+        return ADB_ERR_OK;
 
     read_size = size;
-
     if(read_size > queue->size)
         read_size = queue->size;
 
-    memcpy(
-            data,
-            queue->data + queue->offset,
-            read_size);
-
+    memcpy(data, queue->data + queue->offset, read_size);
     queue->offset += read_size;
     queue->size -= read_size;
 
     if(queue->size == 0)
         queue->offset = 0;
-
-    return read_size;
+    return ADB_ERR_OK;
 }
 
 size_t adb__queue_size(
