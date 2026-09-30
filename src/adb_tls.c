@@ -9,6 +9,21 @@
 #include "adb_transport.h"
 #include "adb_ctx_priv.h"
 #include "adb_key_priv.h"
+#include "adb_alloc_priv.h"
+#include "adb_queue.h"
+#include "adb_utils.h"
+
+typedef struct adb__tls
+{
+    adb__queue_t *queue;
+    adb__transport_t *transport;
+
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config conf;
+    mbedtls_x509_crt crt;
+
+    adb_error_t bio_error;
+} adb__tls_t;
 
 static int adb__tls_bio_send(
         void *userdata,
@@ -67,26 +82,31 @@ static int adb__tls_bio_recv(
     return (int)size;
 }
 
-adb_error_t adb__tls_init(
-        adb__tls_t *tls,
+adb_error_t adb__tls_create(
+        adb__tls_t **out_tls,
         adb_ctx_t *ctx,
         adb_key_t *key,
         adb__transport_t *transport)
 {
+    adb__tls_t *tmp = NULL;
     int err = 0;
-
-    if(!tls || !ctx || !key ||
-            !transport || !transport->read || !transport->write)
+    if(
+            !tmp || !ctx || !key ||
+            !transport || 
+            !transport->read || 
+            !transport->write)
         return ADB_ERR_PARAM;
     
-    memset(tls, 0, sizeof(*tls));
+    tmp = adb__calloc(1, sizeof(*tmp));
+    if(!tmp)
+        return ADB_ERR_NO_MEM;
     
-    mbedtls_ssl_init(&tls->ssl);
-    mbedtls_ssl_config_init(&tls->conf);
-    mbedtls_x509_crt_init(&tls->crt);
+    mbedtls_ssl_init(&tmp->ssl);
+    mbedtls_ssl_config_init(&tmp->conf);
+    mbedtls_x509_crt_init(&tmp->crt);
 
     err = mbedtls_ssl_config_defaults(
-            &tls->conf,
+            &tmp->conf,
             MBEDTLS_SSL_IS_CLIENT,
             MBEDTLS_SSL_TRANSPORT_STREAM,
             MBEDTLS_SSL_PRESET_DEFAULT);
@@ -98,27 +118,27 @@ adb_error_t adb__tls_init(
     }
 
     mbedtls_ssl_conf_rng(
-            &tls->conf,
+            &tmp->conf,
             mbedtls_ctr_drbg_random,
             &ctx->drbg);
     
     mbedtls_ssl_conf_min_tls_version(
-            &tls->conf,
+            &tmp->conf,
             MBEDTLS_SSL_VERSION_TLS1_3);
 
     mbedtls_ssl_conf_max_tls_version(
-            &tls->conf,
+            &tmp->conf,
             MBEDTLS_SSL_VERSION_TLS1_3);
 
     mbedtls_ssl_conf_authmode(
-            &tls->conf,
+            &tmp->conf,
             MBEDTLS_SSL_VERIFY_NONE);
 
-    if(!adb__key_create_x509(key, ctx, &tls->crt))
+    if(!adb__key_create_x509(key, ctx, &tmp->crt))
         return ADB_ERR_CRYPTO;
     err = mbedtls_ssl_conf_own_cert(
-            &tls->conf,
-            &tls->crt,
+            &tmp->conf,
+            &tmp->crt,
             adb__key_get_pk(key));
     if(err != 0)
     {
@@ -127,8 +147,8 @@ adb_error_t adb__tls_init(
     }
             
     err = mbedtls_ssl_setup(
-            &tls->ssl,
-            &tls->conf);
+            &tmp->ssl,
+            &tmp->conf);
     if(err != 0)
     {
         adb__log_err_mbedtls(err, "failed to setup TLS");
@@ -136,23 +156,22 @@ adb_error_t adb__tls_init(
     }
 
     mbedtls_ssl_set_bio(
-            &tls->ssl,
-            tls,
+            &tmp->ssl,
+            tmp,
             adb__tls_bio_send,
             adb__tls_bio_recv,
             NULL);
 
-    tls->transport = transport;
-    tls->bio_error = ADB_ERR_OK;
-    tls->initialized = true;
+    tmp->transport = transport;
+    tmp->bio_error = ADB_ERR_OK;
+    *out_tls = tmp;
     return ADB_ERR_OK;
 
 fail:
-    mbedtls_ssl_free(&tls->ssl);
-    mbedtls_ssl_config_free(&tls->conf);
-    mbedtls_x509_crt_free(&tls->crt);
-    memset(tls, 0, sizeof(*tls));
-
+    mbedtls_ssl_free(&tmp->ssl);
+    mbedtls_ssl_config_free(&tmp->conf);
+    mbedtls_x509_crt_free(&tmp->crt);
+    adb__free(tmp);
     return ADB_ERR_CRYPTO;
 }
 
@@ -160,7 +179,7 @@ adb_error_t adb__tls_handshake(
         adb__tls_t *tls)
 {
     int err = 0;
-    if(!tls || !tls->initialized)
+    if(!tls)
         return ADB_ERR_PARAM;
 
     err = mbedtls_ssl_handshake(&tls->ssl);
@@ -186,7 +205,7 @@ adb_error_t adb__tls_export_keying_material(
 {
     static const char label[] = "adb-label";
     int err = 0;
-    if(!tls || !tls->initialized || !out)
+    if(!tls || !out)
         return ADB_ERR_PARAM;
 
     err = mbedtls_ssl_export_keying_material(
@@ -213,10 +232,8 @@ adb_error_t adb__tls_read(
 {
     size_t offset = 0;
     int ret = 0;
-
-    if(!tls || !tls->initialized)
+    if(!tls)
         return ADB_ERR_PARAM;
-
     if(!buf && size)
         return ADB_ERR_PARAM;
 
@@ -246,12 +263,73 @@ adb_error_t adb__tls_read(
            ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
             return ADB_ERR_DISCONNECTED;
 
-        return ADB_ERR_CRYPTO;
+        return ADB_ERR_IO;
     }
 
     return ADB_ERR_OK;
 }
 
+adb_error_t adb__tls_read_timeout(
+        adb__tls_t *tls,
+        void *buf,
+        const size_t size,
+        const uint32_t timeout_ms)
+{
+    adb_error_t res = ADB_ERR_OK;
+    adb__queue_t *rx_queue = NULL;
+    uint64_t deadline = 0;
+    uint64_t now = 0;
+    uint64_t remaining = 0;
+    size_t available = 0;
+    int ret = 0;
+    uint8_t temp[4096];
+
+    if(!tls || !rx_queue || !buf || size == 0)
+        return ADB_ERR_PARAM;
+
+    rx_queue = tls->queue;
+    deadline = adb__util_monotonic_ms() + timeout_ms;
+    for(;;)
+    {
+        available = adb__queue_size(rx_queue);
+        if(available >= size)
+            return adb__queue_pop(rx_queue, buf, size);
+
+        now = adb__util_monotonic_ms();
+        if(now >= deadline)
+            return ADB_ERR_TIMEOUT;
+
+        remaining = deadline - now;
+        if(remaining > UINT32_MAX)
+            remaining = UINT32_MAX;
+
+        mbedtls_ssl_conf_read_timeout(&tls->conf, (uint32_t)remaining);
+        ret = mbedtls_ssl_read(
+                &tls->ssl,
+                temp,
+                sizeof(temp));
+        mbedtls_ssl_conf_read_timeout(&tls->conf, 0);
+
+        if(ret > 0)
+        {
+            res = adb__queue_push(rx_queue, temp, (size_t)ret);
+            if(res != ADB_ERR_OK)
+                return res;
+            continue;
+        }
+
+        if(ret == 0 ||
+           ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY ||
+           ret == MBEDTLS_ERR_SSL_CONN_EOF ||
+           ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
+            return ADB_ERR_DISCONNECTED;
+
+        if(ret == MBEDTLS_ERR_SSL_TIMEOUT)
+            return ADB_ERR_TIMEOUT;
+
+        return ADB_ERR_IO;
+    }
+}
 
 adb_error_t adb__tls_write(
         adb__tls_t *tls,
@@ -261,7 +339,7 @@ adb_error_t adb__tls_write(
     size_t offset = 0;
     int ret = 0;
 
-    if(!tls || !tls->initialized)
+    if(!tls)
         return ADB_ERR_PARAM;
 
     if(!buf && size)
@@ -296,7 +374,7 @@ adb_error_t adb__tls_write(
            ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
             return ADB_ERR_DISCONNECTED;
 
-        return ADB_ERR_CRYPTO;
+        return ADB_ERR_IO;
     }
 
     return ADB_ERR_OK;
@@ -305,12 +383,13 @@ adb_error_t adb__tls_write(
 void adb__tls_destroy(
         adb__tls_t *tls)
 {
-    if(!tls || !tls->initialized)
+    if(!tls)
         return;
 
+    adb__queue_destroy(tls->queue);
     mbedtls_ssl_free(&tls->ssl);
     mbedtls_ssl_config_free(&tls->conf);
     mbedtls_x509_crt_free(&tls->crt);
 
-    memset(tls, 0, sizeof(*tls));
+    adb__free(tls);
 }

@@ -56,7 +56,7 @@ typedef struct adb_conn
     adb_conn_profile_t profile;
 
     adb__transport_t transport;
-    adb__tls_t tls;
+    adb__tls_t *tls;
 
     uint32_t max_payload_size;
     adb__conn_state_t state;
@@ -185,9 +185,9 @@ adb_error_t adb_conn_create_wireless_from_info(
 adb_error_t adb_conn_create_custom(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
-        const adb_read_fn read_cb,
+        const adb_read_fn read_fn,
         const adb_read_timeout_fn read_timeout_fn,
-        const adb_write_fn write_cb,
+        const adb_write_fn write_fn,
         void *userdata,
         const adb_conn_profile_t profile)
 {
@@ -195,8 +195,8 @@ adb_error_t adb_conn_create_custom(
     adb_error_t res = ADB_ERR_OK;
 
     if(!conn || !ctx ||
-       !read_cb ||
-       !write_cb ||
+       !read_fn ||
+       !write_fn ||
        !ADB__CHECK_ENUM(profile, CONN_PROFILE))
         return ADB_ERR_PARAM;
 
@@ -209,8 +209,9 @@ adb_error_t adb_conn_create_custom(
 
     res = adb__custom_transport_create(
             &tmp->transport,
-            read_cb,
-            write_cb,
+            read_fn,
+            read_timeout_fn,
+            write_fn,
             userdata);
     if(res != ADB_ERR_OK)
         goto fail;
@@ -235,7 +236,7 @@ adb_error_t adb__conn_upgrade_tls(
     if(!conn)
         return ADB_ERR_PARAM;
 
-    res = adb__tls_init(
+    res = adb__tls_create(
             &conn->tls,
             conn->ctx,
             key,
@@ -243,10 +244,10 @@ adb_error_t adb__conn_upgrade_tls(
     if(res != ADB_ERR_OK)
         return res;
 
-    res = adb__tls_handshake(&conn->tls);
+    res = adb__tls_handshake(conn->tls);
     if(res != ADB_ERR_OK)
     {
-        adb__tls_destroy(&conn->tls);
+        adb__tls_destroy(conn->tls);
         return res;
     }
     
@@ -1205,7 +1206,7 @@ void adb_conn_destroy(
     if(!conn)
         return;
 
-    adb__tls_destroy(&conn->tls);
+    adb__tls_destroy(conn->tls);
     adb__transport_destroy(&conn->transport);
     adb__free(conn->banner);
     adb__free(conn);
@@ -1220,10 +1221,10 @@ adb_error_t adb__conn_read(
     if(!conn)
         return ADB_ERR_PARAM;
 
-    if(conn->tls.initialized)
+    if(conn->tls)
     {
         res = adb__tls_read(
-                &conn->tls,
+                conn->tls,
                 buf,
                 size);
     } else {
@@ -1268,10 +1269,10 @@ adb_error_t adb__conn_write(
         return ADB_ERR_PARAM;
 
     adb__log_payload(buf, size, "write data");
-    if(conn->tls.initialized)
+    if(conn->tls)
     {
         return adb__tls_write(
-                &conn->tls,
+                conn->tls,
                 buf,
                 size);
     } else {
@@ -1289,7 +1290,7 @@ uint32_t adb__conn_get_max_payload_size(
 
 adb__tls_t *adb__conn_get_tls(
         adb_conn_t *conn) {
-    return conn ? &conn->tls : NULL;
+    return conn ? conn->tls : NULL;
 }
 
 adb_ctx_t *adb__conn_get_ctx(

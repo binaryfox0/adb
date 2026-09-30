@@ -119,7 +119,6 @@ static void adb__usb_destroy(
         void *userdata)
 {
     adb__usb_transport_t *usb = userdata;
-
     if(!usb)
         return;
 
@@ -128,10 +127,8 @@ static void adb__usb_destroy(
         libusb_release_interface(
                 usb->handle,
                 usb->interface_number);
-
         libusb_close(usb->handle);
     }
-
     adb__free(usb);
 }
 

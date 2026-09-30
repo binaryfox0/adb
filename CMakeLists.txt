@@ -131,6 +131,7 @@ add_library(adb
     src/adb_ctx.c
     src/adb_lookup.c
     src/adb_query.c
+    src/adb_queue.c
     src/adb_transport_usb.c
     src/adb_transport_tcp.c
     src/adb_transport_custom.c
