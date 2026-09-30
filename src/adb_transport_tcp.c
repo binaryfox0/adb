@@ -22,7 +22,7 @@
 typedef struct
 {
     int fd;
-    adb__queue_t *queue;
+    adb__queue_t queue;
 } adb__tcp_transport_t;
 
 static adb_error_t adb__tcp_read(
@@ -66,71 +66,63 @@ static adb_error_t adb__tcp_read_timeout(
         const size_t size,
         const uint32_t timeout_ms)
 {
-    int fd = ((adb__tcp_transport_t*)userdata)->fd;
-    adb__queue_t *queue = ((adb__tcp_transport_t*)userdata)->queue;
+    int fd = 0;
+    adb__queue_t *queue = NULL;
     uint64_t deadline = 0;
-    uint64_t now = 0;
-    uint64_t remaining = 0;
-    size_t available = 0;
-    size_t recv_size = 0;
-    ssize_t ret = 0;
     struct pollfd pfd = {0};
-    int poll_timeout = 0;
-    int poll_ret = 0;
-    uint8_t temp[4096];
 
-    if(!queue || !buf || size == 0)
+    if(!userdata || !buf || size == 0)
         return ADB_ERR_PARAM;
-
+    
+    fd = ((adb__tcp_transport_t*)userdata)->fd;
+    queue = &((adb__tcp_transport_t*)userdata)->queue;
     deadline = adb__util_monotonic_ms() + timeout_ms;
     pfd.fd = fd;
     pfd.events = POLLIN;
+
     for(;;)
     {
-        available = adb__queue_size(queue);
-        if(available >= size)
-        {
-            adb__queue_pop(queue, buf, size);
-            return ADB_ERR_OK;
-        }
+        uint64_t now = 0;
+        uint64_t remaining = 0;
+        int poll_res = 0;
+        ssize_t read_res = 0;
+        uint8_t tmp[4096] = {0};
+
+        if(queue->size >= size)
+            return adb__queue_pop(queue, buf, size);
 
         now = adb__util_monotonic_ms();
         if(now >= deadline)
             return ADB_ERR_TIMEOUT;
 
         remaining = deadline - now;
-        if(remaining > INT_MAX)
-            poll_timeout = INT_MAX;
-        else
-            poll_timeout = (int)remaining;
-
-        poll_ret = poll(&pfd, 1, poll_timeout);
-        if(poll_ret < 0)
+        poll_res = poll(&pfd, 1, 
+                ADB__MIN((int)remaining, INT_MAX));
+        if(poll_res < 0)
         {
             if(errno == EINTR)
                 continue;
             return ADB_ERR_IO;
         }
 
-        if(poll_ret == 0)
+        if(poll_res == 0)
             return ADB_ERR_TIMEOUT;
 
         if((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
             return ADB_ERR_IO;
 
-        ret = recv(fd, temp, sizeof(temp), 0);
-        if(ret > 0)
+        read_res = recv(fd, tmp, sizeof(tmp), 0);
+        if(read_res > 0)
         {
-            recv_size = (size_t)ret;
             adb_error_t res = adb__queue_push(
                     queue, 
-                    temp, recv_size);
+                    tmp, (size_t)read_res);
             if(res != ADB_ERR_OK)
                 return res;
             continue;
         }
 
-        if(ret == 0)
+        if(read_res == 0)
             return ADB_ERR_DISCONNECTED;
         if(errno == EINTR)
             continue;
@@ -180,7 +172,7 @@ static void adb__tcp_destroy(
         return;
 
     adb__tcp_destroy_fd(tcp->fd);
-    adb__queue_destroy(tcp->queue);
+    adb__queue_destroy(&tcp->queue);
     adb__free(tcp);
 }
 
@@ -343,9 +335,6 @@ adb_error_t adb__tcp_transport_create(
     res = adb__tcp_create_fd(addr, &tcp->fd);
     if(res != ADB_ERR_OK)
         goto fail;
-    tcp->queue = adb__queue_create();
-    if(!tcp->queue)
-        { res = ADB_ERR_NO_MEM; goto fail; }
 
     transport->userdata = tcp;
     transport->read = adb__tcp_read;

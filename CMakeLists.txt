@@ -135,7 +135,6 @@ add_library(adb
     src/adb_transport_usb.c
     src/adb_transport_tcp.c
     src/adb_transport_custom.c
-    src/adb_transport.c
     src/adb_tls.c
     src/adb_utils.c
     src/adb_key.c

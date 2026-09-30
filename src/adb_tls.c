@@ -15,7 +15,7 @@
 
 typedef struct adb__tls
 {
-    adb__queue_t *queue;
+    adb__queue_t queue;
     adb__transport_t *transport;
 
     mbedtls_ssl_context ssl;
@@ -91,8 +91,7 @@ adb_error_t adb__tls_create(
     adb__tls_t *tmp = NULL;
     int err = 0;
     if(
-            !tmp || !ctx || !key ||
-            !transport || 
+            !ctx || !key || !transport || 
             !transport->read || 
             !transport->write)
         return ADB_ERR_PARAM;
@@ -276,24 +275,22 @@ adb_error_t adb__tls_read_timeout(
         const uint32_t timeout_ms)
 {
     adb_error_t res = ADB_ERR_OK;
-    adb__queue_t *rx_queue = NULL;
+    adb__queue_t *queue = NULL;
     uint64_t deadline = 0;
     uint64_t now = 0;
     uint64_t remaining = 0;
-    size_t available = 0;
     int ret = 0;
     uint8_t temp[4096];
 
-    if(!tls || !rx_queue || !buf || size == 0)
+    if(!tls || !buf || size == 0)
         return ADB_ERR_PARAM;
 
-    rx_queue = tls->queue;
+    queue = &tls->queue;
     deadline = adb__util_monotonic_ms() + timeout_ms;
     for(;;)
     {
-        available = adb__queue_size(rx_queue);
-        if(available >= size)
-            return adb__queue_pop(rx_queue, buf, size);
+        if(queue->size >= size)
+            return adb__queue_pop(queue, buf, size);
 
         now = adb__util_monotonic_ms();
         if(now >= deadline)
@@ -312,7 +309,7 @@ adb_error_t adb__tls_read_timeout(
 
         if(ret > 0)
         {
-            res = adb__queue_push(rx_queue, temp, (size_t)ret);
+            res = adb__queue_push(queue, temp, (size_t)ret);
             if(res != ADB_ERR_OK)
                 return res;
             continue;
@@ -386,7 +383,7 @@ void adb__tls_destroy(
     if(!tls)
         return;
 
-    adb__queue_destroy(tls->queue);
+    adb__queue_destroy(&tls->queue);
     mbedtls_ssl_free(&tls->ssl);
     mbedtls_ssl_config_free(&tls->conf);
     mbedtls_x509_crt_free(&tls->crt);

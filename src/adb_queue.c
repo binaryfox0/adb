@@ -7,14 +7,6 @@
 
 #define ADB_QUEUE_INITIAL_CAPACITY 4096U
 
-struct adb__queue
-{
-    uint8_t *data;
-    size_t capacity;
-    size_t offset;
-    size_t size;
-};
-
 static bool adb__queue_reserve(
         adb__queue_t *queue,
         const size_t size)
@@ -59,10 +51,6 @@ static bool adb__queue_reserve(
     return true;
 }
 
-adb__queue_t *adb__queue_create(void) {
-    return adb__calloc(1, sizeof(adb__queue_t));
-}
-
 void adb__queue_destroy(
         adb__queue_t *queue)
 {
@@ -70,7 +58,7 @@ void adb__queue_destroy(
         return;
 
     adb__free(queue->data);
-    adb__free(queue);
+    *queue = (adb__queue_t){0};
 }
 
 adb_error_t adb__queue_push(
@@ -116,22 +104,3 @@ adb_error_t adb__queue_pop(
     return ADB_ERR_OK;
 }
 
-size_t adb__queue_size(
-        const adb__queue_t *queue) {
-    return queue ? queue->size : 0;
-}
-
-bool adb__queue_empty(
-        const adb__queue_t *queue) {
-    return queue ? queue->size == 0 : true;
-}
-
-void adb__queue_clear(
-        adb__queue_t *queue)
-{
-    if(!queue)
-        return;
-
-    queue->offset = 0;
-    queue->size = 0;
-}

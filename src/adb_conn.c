@@ -1218,7 +1218,7 @@ adb_error_t adb__conn_read(
         const size_t size)
 {
     adb_error_t res = ADB_ERR_OK;
-    if(!conn)
+    if(!conn || !buf || size == 0)
         return ADB_ERR_PARAM;
 
     if(conn->tls)
@@ -1239,6 +1239,34 @@ adb_error_t adb__conn_read(
     return res;
 }
 
+adb_error_t adb__conn_read_timeout(
+        adb_conn_t *conn,
+        void *buf,
+        const size_t size,
+        const uint32_t timeout_ms)
+{
+    adb_error_t res = ADB_ERR_OK;
+    if(!conn || !buf || size == 0)
+        return ADB_ERR_PARAM;
+
+    if(conn->tls)
+    {
+        res = adb__tls_read_timeout(
+                conn->tls,
+                buf, size,
+                timeout_ms);
+    } else {
+        res = adb__transport_read_timeout(
+                &conn->transport,
+                buf, size,
+                timeout_ms);
+    }
+    
+    if(res == ADB_ERR_OK)
+        adb__log_payload(buf, size, "read data");
+    return res;
+}
+
 adb_error_t adb__conn_read_alloc(
         adb_conn_t *conn,
         void **out,
@@ -1246,6 +1274,9 @@ adb_error_t adb__conn_read_alloc(
 {
     adb_error_t ret = ADB_ERR_OK;
     uint8_t *buf = NULL;
+    
+    if(!conn || !out || size == 0)
+        return ADB_ERR_PARAM;
 
     buf = adb__malloc(size);
     if(!buf)
@@ -1266,6 +1297,9 @@ adb_error_t adb__conn_write(
         const size_t size)
 {
     if(!conn)
+        return ADB_ERR_PARAM;
+
+    if(!conn || !buf || size == 0)
         return ADB_ERR_PARAM;
 
     adb__log_payload(buf, size, "write data");

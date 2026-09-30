@@ -32,6 +32,12 @@ adb_error_t adb__conn_read(
         void *buf,
         const size_t size);
 
+adb_error_t adb__conn_read_timeout(
+        adb_conn_t *conn,
+        void *buf,
+        const size_t size,
+        const uint32_t timeout_ms);
+
 adb_error_t adb__conn_read_alloc(
         adb_conn_t *conn,
         void **out,
