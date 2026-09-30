@@ -133,22 +133,11 @@ adb_error_t adb__sync_write(
     return ADB_ERR_OK;
 }
 
-adb_error_t adb__sync_read(
+static adb_error_t adb__sync_process_pkt(
         adb__sync_t *sync)
 {
-    adb_error_t res = ADB_ERR_OK;
-    if(!sync || !sync->opened)
+    if(!sync)
         return ADB_ERR_PARAM;
-
-    adb__free(sync->pkt_payload);
-    sync->pkt_payload = NULL;
-
-    res = adb__packet_read(
-            sync->conn,
-            &sync->pkt,
-            (void**)&sync->pkt_payload);
-    if(res != ADB_ERR_OK)
-        return res;
 
     if(sync->pkt.arg0 != sync->remote_id ||
             sync->pkt.arg1 != sync->local_id)
@@ -182,6 +171,52 @@ adb_error_t adb__sync_read(
     return ADB_ERR_OK;
 }
 
+adb_error_t adb__sync_read(
+        adb__sync_t *sync)
+{
+    adb_error_t res = ADB_ERR_OK;
+    if(!sync || !sync->opened)
+        return ADB_ERR_PARAM;
+
+    adb__free(sync->pkt_payload);
+    sync->pkt_payload = NULL;
+
+    res = adb__packet_read(
+            sync->conn,
+            &sync->pkt,
+            (void**)&sync->pkt_payload);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    return adb__sync_process_pkt(sync);
+}
+
+static adb_error_t adb__sync_read_timeout(
+        adb__sync_t *sync,
+        const uint32_t timeout_ms)
+{
+    adb_error_t res = ADB_ERR_OK;
+    if(!sync || !sync->opened)
+        return ADB_ERR_PARAM;
+
+    adb__free(sync->pkt_payload);
+    sync->pkt_payload = NULL;
+
+    res = adb__packet_read_timeout(
+            sync->conn,
+            &sync->pkt_reader,
+            timeout_ms);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    adb__free(sync->pkt_payload);
+    sync->pkt = sync->pkt_reader.pkt;
+    sync->pkt_payload = sync->pkt_reader.payload;
+    sync->pkt_reader = (adb__packet_reader_t){0};
+
+    return adb__sync_process_pkt(sync);
+}
+
 adb_error_t adb__sync_handle_okay(
         adb__sync_t *sync)
 {
@@ -194,19 +229,17 @@ adb_error_t adb__sync_handle_okay(
     if(sync->delayed_ack)
     {
         int32_t ack_bytes = 0;
-        if(!adb__packet_check_size(
-                    &sync->pkt,
-                    sizeof(ack_bytes)))
+        if(!adb__packet_check_size(&sync->pkt, sizeof(ack_bytes)))
             return ADB_ERR_PROTOCOL;
 
-        memcpy(&ack_bytes, sync->pkt_payload, sizeof(ack_bytes));
+        memcpy(&ack_bytes, &sync->pkt_payload, sizeof(ack_bytes));
         sync->our_asb += ack_bytes;
     } else {
         if(!adb__packet_check_size(&sync->pkt, 0))
             return ADB_ERR_PROTOCOL;
         sync->send_ready = true;
     }
-
+    
     return ADB_ERR_OK;
 }
 
@@ -262,6 +295,36 @@ adb_error_t adb__sync_ack(
     return ADB_ERR_OK;
 }
 
+adb_error_t adb__sync_check_ack(
+        adb__sync_t *sync)
+{
+    adb_error_t res = ADB_ERR_OK;
+
+    /* tls (mbedtls) have no timeout=0, cuz it means block indefinitely */
+    res = adb__sync_read_timeout(sync, 1);
+    if(res == ADB_ERR_OK)
+    {
+        if(!adb__packet_check_cmd(&sync->pkt, ADB__CMD_OKAY))
+            return ADB_ERR_PROTOCOL;
+        res = adb__sync_handle_okay(sync);
+    } else if(res == ADB_ERR_TIMEOUT) {
+        /* block until ASB replensihed */
+        while(sync->our_asb < 0)
+        {
+            res = adb__sync_read(sync);
+            if(res != ADB_ERR_OK)
+                return res;
+            if(!adb__packet_check_cmd(&sync->pkt, ADB__CMD_OKAY))
+                return ADB_ERR_PROTOCOL;
+            res = adb__sync_handle_okay(sync);
+            if(res != ADB_ERR_OK)
+                return res;
+        }
+        return ADB_ERR_OK;
+    }
+    return res;
+}
+
 void adb__sync_close(
         adb__sync_t *sync)
 {
@@ -281,6 +344,7 @@ void adb__sync_close(
                 NULL);
     }
 
+    adb__packet_reader_reset(&sync->pkt_reader);
     adb__free(sync->pkt_payload);
     *sync = (adb__sync_t){0};
 }

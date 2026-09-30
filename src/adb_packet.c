@@ -69,6 +69,15 @@ static inline bool adb__packet_verify(
         const uint32_t max_size,
         const adb__packet_serialized_t *spkt)
 {
+    if(spkt->payload_size > ADB__PACKET_MAX_PAYLOAD_SIZE)
+    {
+        ADB__ERROR("payload size exceeds the maximum allowed size");
+        ADB__INFO("max size: %d bytes, got: %u bytes",
+                ADB__PACKET_MAX_PAYLOAD_SIZE,
+                spkt->payload_size);
+        return ADB_ERR_PROTOCOL;
+    }
+
     if(spkt->payload_size > max_size)
     {
         ADB__ERROR("payload size exceeds the maximum exchanged size");
@@ -87,6 +96,17 @@ static inline bool adb__packet_verify(
     return true;
 }
 
+ADB__INLINE adb__packet_t adb__pkt_from_spkt(
+        const adb__packet_serialized_t *spkt)
+{
+    adb__packet_t pkt = {0};
+    pkt.command = spkt->command;
+    pkt.arg0 = spkt->arg0;
+    pkt.arg1 = spkt->arg1;
+    pkt.payload_size = spkt->payload_size;
+    return pkt;
+}
+
 adb_error_t adb__packet_read(
         adb_conn_t *conn,
         adb__packet_t *out_pkt,
@@ -103,15 +123,6 @@ adb_error_t adb__packet_read(
     res = adb__conn_read(conn, &spkt, sizeof(spkt));
     if(res != ADB_ERR_OK)
         return res;
-
-    if(spkt.payload_size > ADB__PACKET_MAX_PAYLOAD_SIZE)
-    {
-        ADB__ERROR("payload size exceeds the maximum allowed size");
-        ADB__INFO("max size: %d bytes, got: %u bytes",
-                ADB__PACKET_MAX_PAYLOAD_SIZE,
-                spkt.payload_size);
-        return ADB_ERR_PROTOCOL;
-    }
 
     if(!adb__packet_verify(
                 adb__conn_get_max_payload_size(conn),
@@ -134,10 +145,7 @@ adb_error_t adb__packet_read(
     }
 
 success:
-    out_pkt->command = spkt.command;
-    out_pkt->arg0 = spkt.arg0;
-    out_pkt->arg1 = spkt.arg1;
-    out_pkt->payload_size = spkt.payload_size;
+    *out_pkt = adb__pkt_from_spkt(&spkt);
     *out_payload = tmp_payload;
     
     ADB__INFO("read packet successfully");
@@ -163,15 +171,6 @@ adb_error_t adb__packet_read_into(
     if(res != ADB_ERR_OK)
         return res;
 
-    if(spkt.payload_size > ADB__PACKET_MAX_PAYLOAD_SIZE)
-    {
-        ADB__ERROR("payload size exceeds the maximum allowed size");
-        ADB__INFO("max size: %d bytes, got: %u bytes",
-                ADB__PACKET_MAX_PAYLOAD_SIZE,
-                spkt.payload_size);
-        return ADB_ERR_PROTOCOL;
-    }
-
     if(!adb__packet_verify(
                 adb__conn_get_max_payload_size(conn),
                 &spkt))
@@ -195,15 +194,80 @@ adb_error_t adb__packet_read_into(
     }
 
 success:
-    out_pkt->command = spkt.command;
-    out_pkt->arg0 = spkt.arg0;
-    out_pkt->arg1 = spkt.arg1;
-    out_pkt->payload_size = spkt.payload_size;
+    *out_pkt = adb__pkt_from_spkt(&spkt);
     
     ADB__INFO("read packet successfully");
     adb__log_packet(out_pkt);
 
     return ADB_ERR_OK;
+}
+
+/*
+ * XXX: idk what to do for read packet with timeout
+ * the current implementation use timeout_ms as timeout
+ * for both the packet header and payload (if header was read, 
+ * but payload timed out), not timeout for entire packet
+ */
+adb_error_t adb__packet_read_timeout(
+        adb_conn_t *conn,
+        adb__packet_reader_t *reader,
+        const uint32_t timeout_ms)
+{
+    adb_error_t res = ADB_ERR_OK;
+    uint64_t deadline = 0;
+    uint64_t now = 0;
+    if(!conn || !reader)
+        return ADB_ERR_PARAM;
+
+    deadline = adb__util_monotonic_ms() + timeout_ms;
+    if(!reader->header_ready)
+    {
+        adb__packet_serialized_t spkt = {0};
+        res = adb__conn_read_timeout(conn, 
+                &spkt, sizeof(spkt), timeout_ms);
+        if(res != ADB_ERR_OK)
+            return res;
+
+        if(!adb__packet_verify(
+                    adb__conn_get_max_payload_size(conn),
+                    &spkt))
+            return ADB_ERR_PROTOCOL;
+
+        reader->pkt = adb__pkt_from_spkt(&spkt);
+        reader->header_ready = true;
+        if(reader->pkt.payload_size == 0)
+            return ADB_ERR_OK;
+    }
+
+    now = adb__util_monotonic_ms();
+    if(now > deadline)
+        return ADB_ERR_TIMEOUT;
+
+    if(!reader->payload)
+    {
+        /* assign to the reader to reuse if read failed */
+        reader->payload = adb__malloc(reader->pkt.payload_size);
+        if(!reader->payload)
+            return ADB_ERR_NO_MEM;
+    }
+
+    res = adb__conn_read_timeout(conn, 
+            reader->payload, 
+            reader->pkt.payload_size, 
+            (uint32_t)(deadline - now));
+    if(res != ADB_ERR_OK)
+        return res;
+
+    return ADB_ERR_OK;
+}
+
+void adb__packet_reader_reset(
+        adb__packet_reader_t *reader)
+{
+    if(!reader)
+        return;
+    adb__free(reader->payload);
+    *reader = (adb__packet_reader_t){0};
 }
 
 bool adb__packet_check_cmd(

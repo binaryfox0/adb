@@ -40,6 +40,13 @@ typedef struct
     uint32_t payload_size; /* payload size (0 is allowed) */
 } adb__packet_t;
 
+typedef struct
+{
+    adb__packet_t pkt;
+    bool header_ready;
+    void *payload;
+} adb__packet_reader_t;
+
 ADB__NODISCARD adb_error_t adb__packet_write(
         adb_conn_t *conn,
         const adb__packet_t *pkt,
@@ -61,6 +68,14 @@ ADB__NODISCARD adb_error_t adb__packet_read_into(
         adb__packet_t *out_pkt,
         void *out_payload,
         const size_t max_size);
+
+ADB__NODISCARD adb_error_t adb__packet_read_timeout(
+        adb_conn_t *conn,
+        adb__packet_reader_t *reader,
+        const uint32_t timeout_ms);
+
+void adb__packet_reader_reset(
+        adb__packet_reader_t *reader);
 
 bool adb__packet_check_cmd(
         const adb__packet_t *pkt,

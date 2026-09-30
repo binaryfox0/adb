@@ -1100,9 +1100,10 @@ adb_error_t adb_push(
                         sizeof(adb__sync_data_t) + out_used);
                 if(res != ADB_ERR_OK)
                     goto cleanup;
-    adb__packet_t pkt = {0};
-    uint8_t *pkt_data = NULL;
-    (void)adb__packet_read(conn, &pkt, (void**)&pkt_data);
+
+                res = adb__sync_check_ack(&sync);
+                if(res != ADB_ERR_OK)
+                    goto cleanup;
     
             }
 
@@ -1141,12 +1142,13 @@ adb_error_t adb_push(
                     sizeof(adb__sync_data_t) + out_used);
             if(res != ADB_ERR_OK)
                 goto cleanup;
-    adb__packet_t pkt = {0};
-    uint8_t *pkt_data = NULL;
-    (void)adb__packet_read(conn, &pkt, (void**)&pkt_data);
-    
+                
+            res = adb__sync_check_ack(&sync);
+            if(res != ADB_ERR_OK)
+                goto cleanup;
         }
     }
+
     {
         adb__sync_data_t done = {0};
         done.id = ADB__SYNC_ID_DONE;
