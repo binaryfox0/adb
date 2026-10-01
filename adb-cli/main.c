@@ -1,558 +1,452 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <stdarg.h>
 #include <string.h>
-#include <errno.h>
-#include <limits.h>
 
-#include <pwd.h>
-#include <sys/types.h>
-#include <time.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
 
 #include <aparse.h>
 #include <adb/adb.h>
-#include <qrcodegen.h>
+#include <yyjson.h>
 
-#define error aparse_prog_error
+#define debug aparse_prog_debug
 #define info aparse_prog_info
+#define warn aparse_prog_warn
+#define error aparse_prog_error
 
-#define CHECK(x, res, label, ...) \
-    if(((res) = x) != ADB_ERR_OK) \
-    { \
-        error(__VA_ARGS__); \
-        info("reason: %s", adb_strerror((res))); \
-        goto label; \
+#define ADBC_SERVER_PORT 9000
+
+#if defined(__clang__) || defined(__GNUC__)
+#   define ADB__PRINTF(fmt_index, arg_index) \
+        __attribute__((format(printf, fmt_index, arg_index)))
+#   define ADB__PRINTF_FMT
+#elif defined(_MSC_VER)
+#   define ADB__PRINTF(fmt_index, arg_index)
+#   define ADB__PRINTF_FMT _Printf_format_string_
+#else
+#   define ADB__PRINTF(fmt_index, arg_index)
+#   define ADB__PRINTF_FMT
+#endif
+
+static ADB__PRINTF(1, 2) void adbc_log_err_errno(
+        ADB__PRINTF_FMT const char *fmt, 
+        ...)
+{
+    va_list va;
+    char buffer[1024] = {0};
+    if(!fmt)
+        return;
+
+    va_start(va, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, va);
+    va_end(va);
+
+    error("%s", buffer);
+    info("reason: %s", strerror(errno));
+}
+
+static bool adbc__send(
+        const int fd,
+        const void *data,
+        const size_t size)
+{
+    size_t offset = 0;
+    while(offset < size)
+    {
+        ssize_t res = send(fd, 
+                (const uint8_t*)data + offset, 
+                size - offset, 0);
+        if(res < 0)
+        {
+            if(errno == EINTR)
+                continue;
+
+            adbc_log_err_errno("failed to send data");
+            return false;
+        }
+
+        if(res == 0)
+            return false;
+        offset += (size_t)res;
+    }
+    return true;
+}
+
+static int adbc__recv(
+        const int fd,
+        void *data,
+        const size_t size)
+{
+    size_t offset = 0;
+    while(offset < size)
+    {
+        ssize_t res = recv(fd, 
+                (uint8_t*)data + offset, 
+                size - offset, 0);
+        if(res < 0)
+        {
+            if(errno == EINTR)
+                continue;
+            adbc_log_err_errno("failed to recieve data");
+            return false;
+        }
+
+        if(res == 0)
+            return false;
+        offset += (size_t)res;
+    }
+    return true;
+}
+#define ADBC__MAX_JSON_SIZE (8 * 1024)
+static bool adbc__send_json(
+        const int fd,
+        const char *json,
+        const size_t json_len)
+{
+    uint16_t length = 0U;
+    if(fd < 0 || json == NULL ||
+            json_len > ADBC__MAX_JSON_SIZE)
+        return false;
+
+    length = htons((uint16_t)json_len);
+    if(!adbc__send(fd, &length, sizeof(length)))
+        return false;
+    if(!adbc__send(fd, json, json_len))
+        return false;
+
+    return true;
+}
+
+static bool adbc__recv_json(
+        const int fd,
+        char **out_json,
+        size_t *out_size)
+{
+    uint16_t length_be = 0U;
+    uint16_t length = 0U;
+    char *json = NULL;
+
+    if(fd < 0 || out_json == NULL || out_size == NULL)
+        return false;
+
+    if(!adbc__recv(fd, &length_be, sizeof(length_be)))
+        return false;
+
+    length = ntohs(length_be);
+    if(length > ADBC__MAX_JSON_SIZE)
+        return false;
+
+    json = malloc(length);
+    if(!json)
+        return false;
+
+    if(!adbc__recv(fd, json, (size_t)length))
+    {
+        free(json);
+        return false;
     }
 
-static void log_callback(
+    *out_json = json;
+    *out_size = (size_t)length;
+    return true;
+}
+
+typedef struct
+{
+    adb_ctx_t *ctx;
+    bool quit;
+} adbc_server_ctx_t;
+
+static bool adbc__handle_cmd(
+        adbc_server_ctx_t *ctx,
+        const int fd)
+{
+    bool res = false;
+    char *json = NULL;
+    size_t json_len = 0;
+    yyjson_read_err read_err = {0};
+    yyjson_doc *doc = NULL;
+    yyjson_val *root = NULL;
+    yyjson_val *cmd = NULL;
+
+    if(!adbc__recv_json(fd, &json, &json_len))
+        return false;
+
+    doc = yyjson_read_opts(json, json_len, 0, 
+            NULL, &read_err);
+    if(!doc)
+    {
+        error("failed to parse json payload");
+        info("reason: %s, at %zu byte", read_err.msg, read_err.pos);
+        goto cleanup;
+    }
+
+    root = yyjson_doc_get_root(doc);
+    if(!yyjson_is_obj(root))
+    {
+        error("malformed json payload");
+        goto cleanup;
+    }
+   
+    cmd = yyjson_obj_get(root, "cmd");
+    if(!yyjson_is_str(cmd))
+    {
+        error("expected cmd to be a string");
+        goto cleanup;
+    }
+
+    if(strcmp(yyjson_get_str(cmd), "quit") == 0)
+        ctx->quit = true;
+        
+    res = true;
+    
+cleanup:
+    yyjson_doc_free(doc);
+    free(json);
+    return res;
+}
+
+static const char *adbc__log_level_strs[ADB__LOG_COUNT] =
+{
+    [ADB_LOG_DEBUG] = "debug",
+    [ADB_LOG_INFO]  = "info",
+    [ADB_LOG_WARN]  = "warn",
+    [ADB_LOG_ERROR] = "error",
+};
+
+
+static void adbc__adb_log_callback(
         void *userdata,
         adb_log_level_t level,
         const char *msg)
 {
-    (void)userdata;
-    switch(level)
+    int fd = (int)(uintptr_t)userdata;
+    yyjson_mut_doc *doc = NULL;
+    yyjson_mut_val *root = NULL;
+    char *json = NULL;
+    size_t json_len = 0;
+
+    if(fd < 0)
     {
-        case ADB_LOG_DEBUG: 
-            aparse_log("adb", APARSE__DEBUG_LABEL, "%s", msg);
-            break;
-
-        case ADB_LOG_INFO:
-            aparse_log("adb", APARSE__INFO_LABEL, "%s", msg);
-            break;
-
-        case ADB_LOG_WARN:
-            aparse_log("adb", APARSE__WARN_LABEL, "%s", msg);
-            break;
-
-        case ADB_LOG_ERROR:
-            aparse_log("adb", APARSE__ERROR_LABEL, "%s", msg);
-            break;
-
-        case ADB__LOG_COUNT:
-        default:
-            break;
-    }
-}
-
-static void query_command(
-        const aparse_arg *args,
-        void *param)
-{
-    adb_error_t err = ADB_ERR_OK;
-    adb_ctx_t *ctx = NULL;
-    adb_wired_info_t **infos = NULL;
-    size_t count = 0;
-
-    (void)args;
-    (void)param;
-    
-    CHECK(adb_ctx_create(&ctx), err, cleanup, "failed to create libadb context");
-    CHECK(adb_query_wired(ctx, &infos, &count), 
-            err, cleanup, "failed to query wired devices");
-    for(size_t i = 0; i < count; i++)
-    {
-        adb_wired_info_t *conn_info = infos[i];
-        info("Device %zu: %s - %s", i,
-                adb_wired_info_manufacturer(conn_info),
-                adb_wired_info_product(conn_info));
-    }
-cleanup:
-    adb_ctx_destroy(ctx);
-}
-
-static const char *get_home_dir(void)
-{
-    const char *home = NULL;
-    struct passwd *password_entry = NULL;
-
-    home = getenv("HOME");
-    if(home != NULL && home[0] != '\0')
-        return home;
-
-    password_entry = getpwuid(getuid());
-    if(password_entry != NULL &&
-            password_entry->pw_dir != NULL &&
-            password_entry->pw_dir[0] != '\0')
-        return password_entry->pw_dir;
-
-    return NULL;
-}
-
-static bool parse_ip(
-        const char *input,
-        char *out_host,
-        size_t size,
-        uint16_t *out_port)
-{
-    const char *host_begin;
-    const char *host_end;
-    const char *port_begin;
-    const char *p;
-    unsigned long port = 0;
-    size_t host_len;
-
-    if(!input || !*input || !out_host || !size || !out_port)
-        return false;
-
-    if(input[0] == '[')
-    {
-        /* IPv6: [2001:db8::1]:5555 */
-        host_begin = input + 1;
-        host_end = strchr(host_begin, ']');
-        if(!host_end || host_end[1] != ':')
-            return false;
-
-        port_begin = host_end + 2;
-        if(!*port_begin)
-            return false;
-
-        host_len = (size_t)(host_end - host_begin);
-        if(!host_len || host_len >= INET6_ADDRSTRLEN)
-            return false;
-    }
-    else
-    {
-        /* IPv4: 192.168.1.10:5555 */
-        host_begin = input;
-        host_end = strchr(input, ':');
-        if(!host_end || host_end == host_begin)
-            return false;
-
-        port_begin = host_end + 1;
-        if(!*port_begin)
-            return false;
-
-        host_len = (size_t)(host_end - host_begin);
-        if(host_len >= INET_ADDRSTRLEN)
-            return false;
-
-        /* Unbracketed IPv6 is not supported. */
-        if(strchr(port_begin, ':'))
-            return false;
-    }
-
-    for(p = port_begin; *p; ++p)
-    {
-        if(*p < '0' || *p > '9')
-            return false;
-
-        port = port * 10UL + (unsigned long)(*p - '0');
-        if(port > UINT16_MAX)
-            return false;
-    }
-
-    if(size <= host_len)
-        return false;
-
-    memcpy(out_host, host_begin, host_len);
-    out_host[host_len] = '\0';
-    *out_port = (uint16_t)port;
-
-    return true;
-}
-
-static bool is_file_exist(
-        const char *path)
-{
-    FILE *file = fopen(path, "r");
-    if(!file)
-        return errno == ENOENT ? false : true;
-    fclose(file);
-    return true;
-}
-
-static void pair_command(
-        const aparse_arg *args,
-        void *param)
-{
-    const char *ip = ((const char**)param)[0];
-    const char *code = ((const char**)param)[1];
-
-    char key_path[PATH_MAX] = {0};
-    char host[INET6_ADDRSTRLEN] = {0};
-    uint16_t port = 0;
-
-    adb_error_t err = ADB_ERR_OK;
-    adb_ctx_t *ctx = NULL;
-    adb_conn_t *conn = NULL;
-    adb_key_t *key = NULL;
-
-    (void)args;
-
-    if(!parse_ip(ip, host, sizeof(host), &port))
-    {
-        error("failed to parse \"%s\" as host:port", ip);
-        return;
-    }
-    
-    CHECK(adb_ctx_create(&ctx), 
-            err, cleanup, "failed to create libadb context");
-    CHECK(adb_conn_create_wireless(&conn, ctx, host, port),
-            err, cleanup, "failed to create connection for pairing");
-
-    snprintf(key_path, sizeof(key_path), "%s/%s",
-            get_home_dir(), ".android/adbkey");
-    if(is_file_exist(key_path))
-    {
-        CHECK(adb_key_load(&key, ctx, key_path), 
-                err, cleanup, "failed to load key from \"%s\"", key_path);
-    } else {
-        info("no key was found, generating a new one");
-        CHECK(adb_key_generate(&key, ctx),
-                err, cleanup, "failed to generate new key");
-        CHECK(adb_key_save(key, key_path), 
-                err, cleanup, "failed to save key to \"%s\"", key_path);
-    }
-
-    CHECK(adb_pair(conn, code, key, NULL, 0),
-            err, cleanup, "failed to pair with given device");
-
-cleanup:
-    adb_key_destroy(key);
-    adb_conn_destroy(conn);
-    adb_ctx_destroy(ctx);
-}
-
-static bool display_qr(
-        const char *payload)
-{
-    uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
-    uint8_t tmpbuf[qrcodegen_BUFFER_LEN_MAX];
-
-    bool status = qrcodegen_encodeText(
-        payload, tmpbuf, qrcode,
-        qrcodegen_Ecc_HIGH,
-        qrcodegen_VERSION_MIN,
-        qrcodegen_VERSION_MAX,
-        qrcodegen_Mask_AUTO,
-        true
-    );
-    if(!status)
-        return false;
-    
-    int size = qrcodegen_getSize(qrcode);
-    int border = 4;
-
-    for (int y = -border; y < size + border; y++) 
-    {
-        for (int x = -border; x < size + border; x++) 
+        switch(level)
         {
-
-            bool isBlack = false;
-
-            if (x >= 0 && x < size && y >= 0 && y < size) {
-                isBlack = qrcodegen_getModule(qrcode, x, y);
-            }
-
-            if (isBlack)
-                printf("  ");  // black
-            else
-                printf("\u2588\u2588");            // white
+            case ADB_LOG_DEBUG: debug("%s", msg); break;
+            case ADB_LOG_INFO: info("%s", msg); break;
+            case ADB_LOG_WARN: warn("%s", msg); break;
+            case ADB_LOG_ERROR: error("%s", msg); break;
+            case ADB__LOG_COUNT: 
+            default: break;
         }
-        printf("\n");
-    }
-    return true;
-}
-
-static void pair_qr_command(
-        const aparse_arg *args,
-        void *param)
-{
-    char service_name[32] = {0};
-    char secret[32] = {0};
-    char payload[128] = {0};
-
-    adb_wireless_info_t *conn_info = NULL;
-    char key_path[PATH_MAX] = {0};
-
-    adb_error_t err = ADB_ERR_OK;
-    adb_ctx_t *ctx = NULL;
-    adb_conn_t *conn = NULL;
-    adb_key_t *key = NULL;
-
-    (void)args;
-    (void)param;
-
-    CHECK(adb_ctx_create(&ctx), 
-            err, cleanup, "failed to create libadb context");
-    CHECK(adb_pair_qr_build_payload(ctx, 
-                service_name, sizeof(service_name),
-                secret, sizeof(secret)),
-            err, cleanup, "failed to build QR payload");
-    CHECK(adb_pair_qr_encode_payload(service_name, secret, 
-                payload, sizeof(payload)),
-            err, cleanup, "failed to encode QR code");
-    display_qr(payload);
-
-    struct timespec start = {0}, now = {0};
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    while(!conn_info)
-    {
-        double elapsed = 0.0;
-        err = adb_find_wireless_pairing(ctx, 
-                    service_name, &conn_info);
-
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        elapsed = (double)(now.tv_sec - start.tv_sec) + 
-            (double)(now.tv_nsec - start.tv_nsec) / 1e9;
-        if(elapsed >= 30)
-        {
-            err = ADB_ERR_TIMEOUT;
-            error("no device was found for %d secs", 30);
-            goto cleanup;
-        }
-
-        if(err == ADB_ERR_TIMEOUT)
-            continue;
-        else if(err != ADB_ERR_OK)
-            goto cleanup;
-    }
-
-    CHECK(adb_conn_create_wireless_from_info(&conn, ctx, conn_info),
-            err, cleanup, "failed to create connection for pairing");
-
-    snprintf(key_path, sizeof(key_path), "%s/%s",
-            get_home_dir(), ".android/adbkey");
-    if(is_file_exist(key_path))
-    {
-        CHECK(adb_key_load(&key, ctx, key_path), 
-                err, cleanup, "failed to load key from \"%s\"", key_path);
-    } else {
-        info("no key was found, generating a new one");
-        CHECK(adb_key_generate(&key, ctx),
-                err, cleanup, "failed to generate new key");
-        CHECK(adb_key_save(key, key_path), 
-                err, cleanup, "failed to save key to \"%s\"", key_path);
-    }
-
-    CHECK(adb_pair_qr(conn, secret, key, NULL, 0),
-            err, cleanup, "failed to pair with given device");
-
-cleanup:
-    adb_key_destroy(key);
-    adb_conn_destroy(conn);
-    adb_wireless_info_destroy(conn_info);
-    adb_ctx_destroy(ctx);
-}
-
-static void connect_command(
-        const aparse_arg *args,
-        void *param)
-{
-    const char *ip = ((const char**)param)[0];
-
-    char key_path[PATH_MAX] = {0};
-    char host[INET6_ADDRSTRLEN] = {0};
-    uint16_t port = 0;
-
-    adb_error_t err = ADB_ERR_OK;
-    adb_ctx_t *ctx = NULL;
-    adb_conn_t *conn = NULL;
-    adb_key_t *key = NULL;
-
-    (void)args;
-
-    if(!parse_ip(ip, host, sizeof(host), &port))
-    {
-        error("failed to parse \"%s\" as host:port", ip);
         return;
     }
 
-    CHECK(adb_ctx_create(&ctx), 
-            err, cleanup, "failed to create libadb context");
-    CHECK(adb_conn_create_wireless(&conn, ctx, host, port),
-            err, cleanup, "failed to create connection for pairing");
-    snprintf(key_path, sizeof(key_path), "%s/%s",
-            get_home_dir(), ".android/adbkey");
-    if(is_file_exist(key_path))
+    doc = yyjson_mut_doc_new(NULL);
+    if(!doc)
+        return;
+
+    root = yyjson_mut_obj(doc);
+    if(!root)
+        goto cleanup;
+    yyjson_mut_doc_set_root(doc, root);
+
+    yyjson_mut_obj_add_str(doc, root, "type", "log");
+    yyjson_mut_obj_add_str(doc, root, 
+            "level", adbc__log_level_strs[level]);
+    yyjson_mut_obj_add_str(doc, root, "msg", msg);
+    json = yyjson_mut_write(doc, 0, &json_len);
+    if(!json)
+        goto cleanup;
+
+    adbc__send_json(fd, json, json_len);
+
+cleanup:
+    free(json);
+    yyjson_mut_doc_free(doc);
+}
+typedef struct
+{
+    adb_log_level_t level;
+} adbc_cmd_options_t;
+
+
+static void start_server_cmd(
+        const aparse_arg *arg, 
+        void *data)
+{
+    (void)arg;
+    adbc_cmd_options_t *options = data;
+    struct sockaddr_in address = {0};
+    int fd = -1;
+    int option = 1;
+    adbc_server_ctx_t ctx = {0};
+
+    info("starting server on port %d", ADBC_SERVER_PORT);
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if(fd < 0)
     {
-        CHECK(adb_key_load(&key, ctx, key_path), 
-                err, cleanup, "failed to load key from \"%s\"", key_path);
-    } else {
-        error("no key was found at \"%s\", "
-                "please re-pair with the device for a new one",
-                key_path);
+        adbc_log_err_errno("failed to create a new socket");
+        return;
+    }
+
+    if(setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &option,
+            sizeof(option)) != 0)
+    {
+        adbc_log_err_errno("failed to set socket options");
         goto cleanup;
     }
-    CHECK(adb_handshake(conn, key), 
-            err, cleanup, "failed to perform handshake with %s", ip);
-    adb_push_file(conn, 
-            "/storage/emulated/0/Download/f2e24d563e0b5f624c17e9596309c740.jpg",
-            "/storage/emulated/0/Download/abc.jpg");
 
-cleanup:
-    adb_key_destroy(key);
-    adb_conn_destroy(conn);
-    adb_ctx_destroy(ctx);
-}
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    address.sin_port = htons(ADBC_SERVER_PORT);
 
-
-static void pubkey_command(
-        const aparse_arg *args, 
-        void *param)
-{
-    const char *path = *(const char**)param;
-    const char *output = ((const char**)param)[1];
-
-    adb_error_t err = ADB_ERR_OK;
-    adb_ctx_t *ctx = NULL;
-    adb_key_t *key = NULL;
-    uint8_t pubkey[2048] = {0};
-    size_t pubkey_size = 0;
-
-    (void)args;
-
-    CHECK(adb_ctx_create(&ctx),
-            err, cleanup, "failed to create libadb context");
-    CHECK(adb_key_load(&key, ctx, path),
-            err, cleanup, "failed to load adb private key");
-    CHECK(adb_key_generate_pubkey(
-                key, pubkey, sizeof(pubkey), &pubkey_size),
-            err, cleanup, "failed to generate public key from private key");
-
-    if(output)
+    if(bind(
+            fd,
+            (const struct sockaddr *)&address,
+            sizeof(address)) != 0)
     {
-        FILE *file = NULL;
-        size_t pubkey_len = 0;
+        adbc_log_err_errno("failed to bind socket");
+        goto cleanup;
+    }
 
-        file = fopen(output, "w");
-        if(!file)
-        {
-            error("failed to open \"%s\"", output);
-            info("reason: %s", strerror(errno));
-            goto cleanup;
-        }
+    if(listen(fd, 16) != 0)
+    {
+        adbc_log_err_errno("failed to listen on socket");
+        goto cleanup;
+    }
 
-        pubkey_len = strlen((char*)pubkey);
-        if(fwrite(pubkey, 1, pubkey_len, file) != pubkey_len)
-        {
-            error("failed to write key to \"%s\"", output);
-            info("reason: %s", strerror(errno));
-            goto cleanup;
-        }
+    adb_log_set(adbc__adb_log_callback,
+            (void*)(uintptr_t)-1, options->level);
+    adb_ctx_create(&ctx.ctx);
+    while(!ctx.quit)
+    {
+        int client_fd = accept(fd, NULL, NULL);
+        if(client_fd < 0)
+            continue;
 
-        fclose(file);
-    } else
-        printf("%s\n", pubkey);
+        adb_log_set_userdata((void*)(uintptr_t)client_fd);
+        adbc__handle_cmd(&ctx, client_fd);
+        adb_log_set_userdata((void*)(uintptr_t)-1);
+        close(client_fd);
+    }
+
+    info("shutting down server on port %d", ADBC_SERVER_PORT);
 
 cleanup:
-    adb_key_destroy(key);
-    adb_ctx_destroy(ctx);
+    adb_ctx_destroy(ctx.ctx);
+    close(fd);
 }
+
+static int adbc__connect_server(void)
+{
+    int fd = -1;
+    struct sockaddr_in address = {0};
+
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if(fd < 0)
+        return -1;
+
+    address.sin_family = AF_INET;
+    address.sin_port = htons(ADBC_SERVER_PORT);
+    if(inet_pton(AF_INET, "127.0.0.1", 
+                &address.sin_addr) != 1)
+    {
+        adbc_log_err_errno("failed to process network address");
+        goto fail;
+    }
+
+    if(connect(fd, (const struct sockaddr *)&address,
+            sizeof(address)) != 0)
+    {
+        adbc_log_err_errno("failed to connect to server");
+        goto fail;
+    }
+
+    return fd;
+
+fail:
+    close(fd);
+    return -1;
+}
+
+static void kill_server_cmd(
+        const aparse_arg *arg, 
+        void *data)
+{
+    static const char json[] = "{\"cmd\":\"quit\"}";
+    (void)arg;
+    (void)data;
+    int fd = adbc__connect_server();
+    adbc__send_json(fd, json, sizeof(json) - 1);
+    close(fd);
+}
+
+#define ADBC_ARRSZ(arr) (sizeof((arr)) / sizeof((arr)[0]))
 
 int main(int argc, char **argv)
 {
-    aparse_arg pair_args[] =
+    const char *level_str = NULL;
+    adbc_cmd_options_t options = {0};
+
+    aparse_list dispatch = {0};
+    aparse_arg commands[] = 
     {
-        aparse_arg_string(
-                "ip", 
-                NULL, 0, 
-                "IP to target device (host:port)"),
-        aparse_arg_string(
-                "code",
-                NULL, 0, 
-                "Pairing code alongside with the IP"),
-        aparse_arg_end_marker
-    };
-    
-    aparse_arg connect_args[] =
-    {
-        aparse_arg_string(
-                "ip", 
-                NULL, 0, 
-                "IP to target device (host:port)"),
+        aparse_arg_subparser(
+                "start-server", NULL, 
+                start_server_cmd, &options, sizeof(options),  
+                "Ensure that there is a server running"),
+        aparse_arg_subparser(
+                "kill-server", NULL, 
+                kill_server_cmd, &options, sizeof(options),  
+                "Kill the server if it is running"),
         aparse_arg_end_marker
     };
 
-    aparse_arg pubkey_args[] = 
-    {
-        aparse_arg_string("path", 
-                NULL, 0, 
-                "Path to RSA-2048 private key"),
-        aparse_arg_option(
-                "-o", "--output", 
-                NULL, 0,
-                APARSE_ARG_TYPE_STRING,
-                "Path to output file"),
-        aparse_arg_end_marker
-    };
-    aparse_arg commands[] =
-    {
-        aparse_arg_subparser_impl(
-                "pair", 
-                pair_args, pair_command, 
-                NULL, 0, 
-                "Pair wireless ADB device through TCP",
-                (size_t[]){
-                    0, sizeof(const char*),
-                    sizeof(const char*), sizeof(const char*)
-                }, 2),
-        aparse_arg_subparser_impl(
-                "pair-qr", 
-                NULL, pair_qr_command, 
-                NULL, 0, 
-                "Pair wireless ADB device through TCP with QR", 
-                NULL, 0),
-        aparse_arg_subparser_impl(
-                "connect", 
-                connect_args, connect_command, 
-                NULL, 0, 
-                "Connect wireless ADB device through TCP",
-                (size_t[]){
-                    0, sizeof(const char*),
-                }, 1),
-        aparse_arg_subparser(
-                "query",
-                NULL, query_command,
-                NULL, 0,
-                "Query all USB connected ADB devices"),
-        aparse_arg_subparser_impl(
-                "pubkey", 
-                pubkey_args, pubkey_command, 
-                NULL, 0, 
-                "Generate public key from private key", 
-                (size_t[]){
-                    0, sizeof(void*),
-                    sizeof(void*), sizeof(void*)
-                }, 2),
-        aparse_arg_end_marker
-    };
-    aparse_arg main_args[] =
+    aparse_arg main_args[] = 
     {
         aparse_arg_parser("command", commands),
+        aparse_arg_option(
+                "-lvl", "--log-level", 
+                &level_str, 0, APARSE_ARG_TYPE_STRING, 
+                "Set libadb and adb-cli log level"),
         aparse_arg_end_marker
     };
-    aparse_list dispatch = {0};
 
-    if(aparse_parse(
-            argc, argv,
-            main_args, &dispatch,
-            "adb cli interface") != APARSE_STATUS_OK)
+    if(aparse_parse(argc, argv, 
+                main_args, &dispatch, 
+                "libadb command line utils") != APARSE_STATUS_OK)
         return 1;
 
-    adb_set_log_callback(log_callback, NULL, 
-            ADB_LOG_DEBUG);
+    if(level_str)
+    {
+        options.level = ADB__LOG_COUNT;
+        for(size_t i = 0; i < ADBC_ARRSZ(adbc__log_level_strs); i++)
+        {
+            if(!strcmp(adbc__log_level_strs[i], level_str))
+            {
+                options.level = (adb_log_level_t)i;
+                break;
+            }
+        }
+
+        if(options.level == ADB__LOG_COUNT)
+        {
+            error("unknown log level was specified");
+            info("supported: \"debug\", \"info\", \"warn\", \"error\", "
+                    "got: \"%s\"", level_str);
+            return 1;
+        }
+    } else
+        options.level = ADB_LOG_ERROR;
+
     aparse_dispatch_all(&dispatch);
     return 0;
 }

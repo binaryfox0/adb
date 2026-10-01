@@ -22,14 +22,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-/* Source commit: 7de2e1ff70fb6fb7f60b850cde22a626bddd14f4 */
+/* Source commit: 3c66c6e6c453090a731c8efc7ad2e3749427a0c5 */
 
 #ifndef APARSE_H
 #define APARSE_H
 
 #include <stdint.h>
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 /**
  * @brief Dynamic array container.
@@ -448,7 +448,7 @@ typedef struct aparse_arg
      * Indicates whether the argument is a string, integer, array, subparser, etc.
      * See @ref aparse_arg_types for all possible values.
      */
-    aparse_arg_types type;
+    aparse_arg_types type : 8;
 
     /**
      * @brief Internal parser flags to track parsing process.
@@ -855,7 +855,7 @@ APARSE__INLINE aparse_arg aparse_arg_array(
  * information will be discarded
  */
 static inline bool aparse_arg_nend(const aparse_arg* arg) {
-    return arg->longopt != 0 || arg->shortopt != 0;
+    return arg && (arg->longopt != 0 || arg->shortopt != 0);
 }
 
 /**
@@ -868,57 +868,39 @@ static inline bool aparse_arg_nend(const aparse_arg* arg) {
  * @param argc              Argument count (from `main`).
  * @param argv              Argument vector (from `main`).
  * @param args              Argument definition table, terminated with ::aparse_arg_end_marker.
- * @param dispatch_list_out Optional output for the list of dispatched function
+ * @param out_dispatch      Optional output list for delayed dispatch
  * @param program_desc      Optional program description for `--help` output (may be NULL).
  *
  * @return One of the ::aparse_status codes, typically ::APARSE_STATUS_OK on success.
  *
  * @note Errors and warnings can be intercepted using ::aparse_set_error_callback.
- * @note If `dispatch_list == NULL`, dispatched function will be executed immedieately after parsing complete
+ * @note If `out_dispatch == NULL`, dispatched function will be executed immedieately after parsing complete
  */
 aparse_status aparse_parse(
         const int argc, 
         char* const * argv, 
         aparse_arg* args, 
-        aparse_list* dispatch_list_out, 
+        aparse_list* out_dispatch, 
         const char* program_desc
 );
 
 /**
  * @brief Dispatch all queued handle
+ * Dispatch all handle with their respective constructed payload
  *
- * Dispatch all handle with their respective constructed payload, then
- * also freeing any resources related to payload
- *
- * @param dispatch_list The list of dispatched functions
+ * @param dispatch The list of dispatched functions
  */
-extern void aparse_dispatch_all(aparse_list* dispatch_list);
+extern void aparse_dispatch_all(aparse_list* dispatch);
 
 /**
- * @brief Check for the handle inside dispatch list
+ * @brief Free a dispatch list
  *
- * Check if the handle inside dispatch list was existed with given name,
- * normally it will be compared against `aparse_arg.longopt`
+ * Frees all resources owned by the dispatch list, including payloads
+ * allocated for subparsers when no user-provided payload was specified.
  *
- * @param name Name of dispatch handle to find
- *
- * @return If it wasn't existed in `dispatch_list`, return 1, otherwise return 0
+ * @param dispatch Dispatch list to free
  */
-extern int aparse_dispatch_contain(const aparse_list* dispatch_list, const char* name);
-
-/**
- * @brief Free a dispatch list without executing handlers
- *
- * Releases all resources associated with the dispatch list and its queued
- * handlers without invoking any handler functions. Any constructed payloads
- * stored in the list are freed.
- *
- * This function is typically used when argument parsing fails or when
- * execution of dispatched handlers is intentionally skipped.
- *
- * @param dispatch_list List of queued dispatch handlers to be freed
- */
-extern void aparse_dispatch_free(aparse_list* dispatch_list);
+extern void aparse_dispatch_free(aparse_list* dispatch);
 
 /**
  * @brief Set a global error callback for parser events.
@@ -953,18 +935,18 @@ const char* aparse_error_msg(const aparse_status status);
 
 #ifdef APARSE_IMPLEMENTATION
 
-#include <errno.h>
 #include <stdio.h>
-#include <stdint.h>
-#include <ctype.h>
+#include <errno.h>
+#include <float.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <stdarg.h>
-#include <string.h>
-#include <float.h>
 #include <math.h>
+#include <stdint.h>
+#include <ctype.h>
+#include <string.h>
 
-/* -----------/home/binaryfox0/proj/aparse/src/aparse.c BEGIN----------- */
+/* ---/data/data/com.termux/files/home/proj/aparse/src/aparse.c BEGIN--- */
 
 #ifdef _WIN32
 #   include <windows.h>
@@ -1021,9 +1003,11 @@ typedef enum {
 } aparse_arg_state_t;
 
 
-typedef struct {
+typedef struct 
+{
     aparse_arg* args;
     void* payload;
+    bool freeable;
 } aparse__dispatch_t;
 
 typedef struct aparse_context
@@ -1186,7 +1170,7 @@ void aparse_log(
         fputs(type, stderr);
         fputs(": ", stderr);
     }
-    
+
     if(fmt)
     {
         va_list va;
@@ -1201,7 +1185,7 @@ aparse_status aparse_parse(
         const int argc, 
         char* const * argv,
         aparse_arg* args, 
-        aparse_list* dispatch_list_out, 
+        aparse_list* out_dispatch, 
         const char* program_desc)
 {
     aparse_status ret = APARSE_STATUS_OK;
@@ -1242,8 +1226,8 @@ aparse_status aparse_parse(
 
     if(ret == APARSE_STATUS_OK)
     {
-        if(dispatch_list_out)
-            *dispatch_list_out = dispatch_list;
+        if(out_dispatch)
+            *out_dispatch = dispatch_list;
         else
             aparse_dispatch_all(&dispatch_list);
     }
@@ -1267,29 +1251,6 @@ void aparse_dispatch_all(
         entry->args->handler(entry->args, entry->payload);
         aparse__destroy_payload(entry->args, entry->payload);
     }
-    aparse_list_free(dispatch_list);
-}
-
-int aparse_dispatch_contain(
-        const aparse_list* dispatch_list, 
-        const char* name)
-{
-    if(
-            !dispatch_list || 
-            !dispatch_list->ptr || 
-            dispatch_list->size < 1 || 
-            !name || 
-            !*name
-    ) return 0;
-    aparse__dispatch_t* list = dispatch_list->ptr;
-    for(size_t i = 0; i < dispatch_list->size; i++)
-    {
-        if(!list[i].args->longopt)
-            continue;
-        if(!strcmp(list[i].args->longopt, name))
-            return 1;
-    }
-    return 0;
 }
 
 void aparse_dispatch_free(
@@ -1299,8 +1260,10 @@ void aparse_dispatch_free(
         return;
     aparse__dispatch_t* list = dispatch_list->ptr;
     for(size_t i = 0; i < dispatch_list->size; i++)
-        if(list[i].payload)
+    {
+        if(list[i].payload && list[i].freeable)
             free(list[i].payload);
+    }
 }
 
 void aparse_set_error_callback(const aparse_error_callback cb, void* userdata)
@@ -1560,18 +1523,20 @@ static aparse_status aparse__process_parser(
         aparse__context_t* ctx)
 {
     aparse_status ret = APARSE_STATUS_OK;
-    aparse_arg *subparser = 0;
+    aparse_arg* subparser = 0;
     uint8_t* buffer = 0;
     int invalid_idx = 0;
     size_t min_size = 0;
+    size_t last_idx = 0;
+    bool freeable = false;
 
     if(!arg->subargs)
     {
-        aparse__raise_nonfatal(ctx, APARSE_STATUS_NULL_POINTER, 
-                arg, NULL);
+        aparse__raise_nonfatal(ctx,
+                APARSE_STATUS_NULL_POINTER, arg, NULL);
         return APARSE_STATUS_OK;
     }
-    
+
     aparse__foreach(item, arg)
     {
         if(!strcmp(cargv, item->longopt))
@@ -1580,62 +1545,87 @@ static aparse_status aparse__process_parser(
             break;
         }
     }
-    if(!subparser) 
+
+    if(!subparser)
     {
         aparse_list arg_list = { .ptr = (void*)arg->subargs };
-        for(aparse_arg* copy = arg_list.ptr; aparse_arg_nend(copy); copy++)
+
+        for(aparse_arg* copy = arg_list.ptr;
+            aparse_arg_nend(copy);
+            copy++)
+        {
             arg_list.size++;
-        aparse__raise_fatal(ctx, APARSE_STATUS_INVALID_SUBCOMMAND, 
+        }
+
+        aparse__raise_fatal(ctx,
+                APARSE_STATUS_INVALID_SUBCOMMAND,
                 &arg_list, cargv);
     }
 
     if(!subparser->subargs)
     {
-        aparse_list_add(ctx->dispatch, 
-                (aparse__dispatch_t[1]){{subparser, NULL}});
+        aparse_list_add(ctx->dispatch,
+                (aparse__dispatch_t[1]){{
+                    .args = subparser,
+                    .payload = subparser->ptr
+                }});
         return APARSE_STATUS_OK;
     }
 
     if(subparser->layout_size != 0)
-    {   
-        size_t last_idx = subparser->layout_size - 1;
+    {
+        last_idx = subparser->layout_size - 1;
         if(!aparse__verify_layout(subparser, &invalid_idx))
         {
-            aparse__raise_fatal(ctx, 
-                    APARSE_STATUS_INVALID_LAYOUT, subparser, &invalid_idx);
+            aparse__raise_fatal(ctx,
+                    APARSE_STATUS_INVALID_LAYOUT,
+                    subparser, &invalid_idx);
         }
+
         min_size =
-                subparser->data_layout[last_idx * 2] + 
+                subparser->data_layout[last_idx * 2] +
                 subparser->data_layout[last_idx * 2 + 1];
-        if(!subparser->ptr)
+        if(subparser->ptr)
+        {
+            if(subparser->size < min_size)
+            {
+                aparse__raise_fatal(ctx,
+                        APARSE_STATUS_INVALID_SIZE,
+                        subparser, &subparser->size);
+            }
+            buffer = subparser->ptr;
+        }
+        else
         {
             buffer = calloc(min_size, sizeof(*buffer));
             if(!buffer)
-                aparse__raise_fatal(ctx, APARSE_STATUS_ALLOC_FAILURE, 0, 0);
-        } else {
-            if(subparser->size < min_size)
-                aparse__raise_fatal(ctx, APARSE_STATUS_INVALID_SIZE,
-                        subparser, &subparser->size);
-            buffer = subparser->ptr;
+            {
+                aparse__raise_fatal(ctx,
+                        APARSE_STATUS_ALLOC_FAILURE, 0, 0);
+            }
+            freeable = true;
         }
     }
 
     aparse__fill_args_dest(subparser, buffer);
-
-    ret = aparse__parse_impl(argc, argv, subparser->subargs, ctx);
+    ret = aparse__parse_impl(
+            argc, argv, subparser->subargs, ctx);
     if(ret == APARSE_STATUS_OK)
         ret = aparse__check_missing(ctx, subparser->subargs);
 
     if(!subparser->handler || ret != APARSE_STATUS_OK)
-        free(buffer);
-    else {
-        aparse_list_add(ctx->dispatch, 
-                (aparse__dispatch_t[1])
-                {{
-                    .args = subparser, 
-                    .payload = buffer
-                }});
+    {
+        if(freeable)
+            free(buffer);
+        return ret;
     }
+
+    aparse_list_add(ctx->dispatch,
+            (aparse__dispatch_t[1]){{
+                .args = subparser,
+                .payload = buffer,
+                .freeable = freeable
+            }});
     return ret;
 }
 
@@ -2500,9 +2490,9 @@ static int aparse__get_term_width(void)
 
     return 80;
 }
-/* ------------/home/binaryfox0/proj/aparse/src/aparse.c END------------ */
+/* ----/data/data/com.termux/files/home/proj/aparse/src/aparse.c END---- */
 
-/* --------/home/binaryfox0/proj/aparse/src/aparse_list.c BEGIN--------- */
+/* /data/data/com.termux/files/home/proj/aparse/src/aparse_list.c BEGIN- */
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
@@ -2570,7 +2560,7 @@ void aparse_list_free(aparse_list* list)
     free(list->ptr);
     memset(list, 0, sizeof(*list));
 }
-/* ---------/home/binaryfox0/proj/aparse/src/aparse_list.c END---------- */
+/* -/data/data/com.termux/files/home/proj/aparse/src/aparse_list.c END-- */
 
 
 #endif /* APARSE_IMPLEMENTATION */

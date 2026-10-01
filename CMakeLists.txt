@@ -166,12 +166,14 @@ target_add_asan(adb)
 
 if(ADB_BUILD_CLI)
     add_subdirectory(deps/qrcodegen)
+    add_subdirectory(deps/yyjson)
     if(NOT TARGET aparse)
         add_subdirectory(deps/aparse)
     endif()
 
-    add_executable(adb-cli adb-cli/main.c)
-    target_link_libraries(adb-cli PRIVATE aparse adb qrcodegen)
+    add_executable(adb-cli 
+        adb-cli/main.c)
+    target_link_libraries(adb-cli PRIVATE aparse adb qrcodegen yyjson)
     target_add_strict_flags(adb-cli)
     target_add_asan(adb-cli)
 endif()

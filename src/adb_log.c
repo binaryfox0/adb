@@ -16,15 +16,15 @@ static adb_log_fn adb__log_callback = NULL;
 static void *adb__log_userdata = NULL;
 static adb_log_level_t adb__log_level = ADB_LOG_ERROR;
 
-adb_error_t adb_set_log_callback(
-        const adb_log_fn callback,
+adb_error_t adb_log_set(
+        const adb_log_fn func,
         void *userdata,
         const adb_log_level_t level)
 {
-    if(level < 0 || level >= ADB__LOG_COUNT)
+    if(!ADB__CHECK_ENUM(level, LOG))
         return ADB_ERR_PARAM;
 
-    if(!callback)
+    if(!func)
     {
         adb__log_callback = NULL;
         adb__log_userdata = NULL;
@@ -32,8 +32,36 @@ adb_error_t adb_set_log_callback(
         return ADB_ERR_OK;
     }
 
-    adb__log_callback = callback;
+    adb__log_callback = func;
     adb__log_userdata = userdata;
+    adb__log_level = level;
+    return ADB_ERR_OK;
+}
+
+void adb_log_set_func(
+        const adb_log_fn func)
+{
+    if(!func)
+    {
+        adb__log_callback = NULL;
+        adb__log_userdata = NULL;
+        adb__log_level = ADB_LOG_ERROR;
+    }
+
+    adb__log_callback = func;
+}
+
+void adb_log_set_userdata(
+        void *userdata) {
+    adb__log_userdata = userdata;
+}
+
+adb_error_t adb_log_set_level(
+        const adb_log_level_t level)
+{
+    if(!ADB__CHECK_ENUM(level, LOG))
+        return ADB_ERR_PARAM;
+
     adb__log_level = level;
     return ADB_ERR_OK;
 }

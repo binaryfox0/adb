@@ -17,9 +17,18 @@ typedef void (*adb_log_fn)(
         adb_log_level_t level,
         const char *msg);
 
-adb_error_t adb_set_log_callback(
+adb_error_t adb_log_set(
         const adb_log_fn callback,
         void *userdata,
+        const adb_log_level_t level);
+
+void adb_log_set_func(
+        const adb_log_fn callback);
+
+void adb_log_set_userdata(
+        void *userdata);
+
+adb_error_t adb_log_set_level(
         const adb_log_level_t level);
 
 #endif
