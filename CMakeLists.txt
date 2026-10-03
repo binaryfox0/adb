@@ -128,6 +128,7 @@ add_library(adb
     src/adb_alloc.c
     src/adb_error.c
     src/adb_log.c
+    src/adb_dynarr.c
     src/adb_ctx.c
     src/adb_lookup.c
     src/adb_query.c

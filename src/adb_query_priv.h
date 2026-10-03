@@ -1,8 +1,11 @@
 #ifndef ADB_QUERY_PRIV_H
 #define ADB_QUERY_PRIV_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "adb_sock.h"
+
+#define ADB__MDNS_NAME_LENGTH_MAX   256
 
 typedef struct libusb_device libusb_device;
 typedef struct adb_wired_info
@@ -22,7 +25,14 @@ typedef struct adb_wired_info
 
 typedef struct adb_wireless_info 
 {
-    struct sockaddr addr;
+    char hostname[ADB__MDNS_NAME_LENGTH_MAX];
+
+    struct sockaddr_in sin;
+    struct sockaddr_in6 sin6;
+
+    bool have_srv;
+    bool have_ipv4;
+    bool have_ipv6;
 } adb_wireless_info_t;
 
 void adb__wired_info_destroy(

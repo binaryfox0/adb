@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
+#include "adb_dynarr.h"
 
 typedef struct libusb_context libusb_context;
 typedef struct adb_wired_info adb_wired_info_t;
@@ -19,9 +20,8 @@ typedef struct adb_ctx
     uint32_t features;
 
     libusb_context *usb;
-    adb_wired_info_t **wired_infos;
-    size_t wired_info_count;
-    size_t infos_capacity;
+    adb__dynarr_t wired_infos;
+    adb__dynarr_t wireless_infos;
 
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context drbg;

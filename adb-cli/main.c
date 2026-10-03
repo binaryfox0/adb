@@ -20,6 +20,7 @@
 #define error aparse_prog_error
 
 #define ADBC_SERVER_PORT 9000
+#define ADBC_ARRSZ(arr) (sizeof((arr)) / sizeof((arr)[0]))
 
 #if defined(__clang__) || defined(__GNUC__)
 #   define ADB__PRINTF(fmt_index, arg_index) \
@@ -162,10 +163,108 @@ typedef struct
     bool quit;
 } adbc_server_ctx_t;
 
+typedef bool (*adbc_cmd_handler_fn)(
+        adbc_server_ctx_t *ctx,
+        const int client_fd);
+
+static bool adbc_cmd_quit(
+        adbc_server_ctx_t *ctx,
+        const int client_fd)
+{
+    (void)client_fd;
+    ctx->quit = true;
+    return true;
+}
+
+static bool adbc_cmd_devices(
+        adbc_server_ctx_t *ctx,
+        const int client_fd)
+{
+    bool res = false;
+    adb_wired_info_t **wired = NULL;
+    size_t wired_count = 0;
+    adb_wireless_info_t **wireless = NULL;
+    size_t wireless_count = 0;
+    yyjson_mut_doc *doc = NULL;
+    yyjson_mut_val *root = NULL;
+    yyjson_mut_val *arr = NULL;
+    char *json = NULL;
+    size_t json_len = 0;
+    char buffer[ADB_WIRELESS_INFO_ENDPOINT_SIZE] = {0};
+
+    adb_query_wired(ctx->ctx,
+            &wired, &wired_count);
+    adb_query_wireless(ctx->ctx,
+            &wireless, &wireless_count);
+
+    doc = yyjson_mut_doc_new(NULL);
+    if(!doc)
+        return false;
+
+    root = yyjson_mut_obj(doc);
+    if(!root)
+        goto cleanup;
+
+    yyjson_mut_doc_set_root(doc, root);
+
+    if(!yyjson_mut_obj_add_str(doc, root, "type", "result"))
+        goto cleanup;
+
+    arr = yyjson_mut_arr(doc);
+    if(!arr)
+        goto cleanup;
+
+    for(size_t i = 0; i < wired_count; i++)
+    {
+        if(!yyjson_mut_arr_add_str(
+                    doc,
+                    arr,
+                    adb_wired_info_serial(wired[i])))
+            goto cleanup;
+    }
+
+    for(size_t i = 0; i < wireless_count; i++)
+    {
+        memset(buffer, 0, sizeof(buffer));
+
+        if(!adb_wireless_info_endpoint(
+                    wireless[i],
+                    buffer,
+                    sizeof(buffer)))
+            goto cleanup;
+
+        if(!yyjson_mut_arr_add_str(doc, arr, buffer))
+            goto cleanup;
+    }
+
+    if(!yyjson_mut_obj_add_val(doc, root, "devices", arr))
+        goto cleanup;
+
+    json = yyjson_mut_write(doc, 0, &json_len);
+    if(!json)
+        goto cleanup;
+
+    res = adbc__send_json(client_fd, json, json_len);
+
+cleanup:
+    free(json);
+    yyjson_mut_doc_free(doc);
+    return res;
+}
+
 static bool adbc__handle_cmd(
         adbc_server_ctx_t *ctx,
-        const int fd)
+        const int client_fd)
 {
+    static const struct {
+        const char *cmd;
+        adbc_cmd_handler_fn handler;
+    } handlers[] =
+    {
+        { "quit",    adbc_cmd_quit },
+        { "devices", adbc_cmd_devices }
+    };
+
     bool res = false;
     char *json = NULL;
     size_t json_len = 0;
@@ -173,16 +272,25 @@ static bool adbc__handle_cmd(
     yyjson_doc *doc = NULL;
     yyjson_val *root = NULL;
     yyjson_val *cmd = NULL;
+    yyjson_val *type = NULL;
+    const char *cmd_str = NULL;
 
-    if(!adbc__recv_json(fd, &json, &json_len))
+    if(!adbc__recv_json(client_fd, &json, &json_len))
         return false;
 
-    doc = yyjson_read_opts(json, json_len, 0, 
-            NULL, &read_err);
+    doc = yyjson_read_opts(
+            json,
+            json_len,
+            0,
+            NULL,
+            &read_err);
+
     if(!doc)
     {
         error("failed to parse json payload");
-        info("reason: %s, at %zu byte", read_err.msg, read_err.pos);
+        info("reason: %s, at %zu byte",
+                read_err.msg,
+                read_err.pos);
         goto cleanup;
     }
 
@@ -192,7 +300,22 @@ static bool adbc__handle_cmd(
         error("malformed json payload");
         goto cleanup;
     }
-   
+    
+    type = yyjson_obj_get(root, "type");
+    if(!yyjson_is_str(type))
+    {
+        error("expected type to be a string");
+        goto cleanup;
+    }
+
+    if(strcmp(yyjson_get_str(type), "cmd") != 0)
+    {
+        error("unexpected packet type");
+        info("expected: \"cmd\", got: \"%s\"",
+                yyjson_get_str(type));
+        goto cleanup;
+    }
+
     cmd = yyjson_obj_get(root, "cmd");
     if(!yyjson_is_str(cmd))
     {
@@ -200,17 +323,23 @@ static bool adbc__handle_cmd(
         goto cleanup;
     }
 
-    if(strcmp(yyjson_get_str(cmd), "quit") == 0)
-        ctx->quit = true;
-        
-    res = true;
-    
+    cmd_str = yyjson_get_str(cmd);
+    for(size_t i = 0; i < ADBC_ARRSZ(handlers); i++)
+    {
+        if(strcmp(cmd_str, handlers[i].cmd) == 0)
+        {
+            res = handlers[i].handler(ctx, client_fd);
+            goto cleanup;
+        }
+    }
+
+    error("unknown command: %s", cmd_str);
+
 cleanup:
     yyjson_doc_free(doc);
     free(json);
     return res;
 }
-
 static const char *adbc__log_level_strs[ADB__LOG_COUNT] =
 {
     [ADB_LOG_DEBUG] = "debug",
@@ -244,7 +373,6 @@ static void adbc__adb_log_callback(
         }
         return;
     }
-
     doc = yyjson_mut_doc_new(NULL);
     if(!doc)
         return;
@@ -389,7 +517,96 @@ static void kill_server_cmd(
     close(fd);
 }
 
-#define ADBC_ARRSZ(arr) (sizeof((arr)) / sizeof((arr)[0]))
+static void devices_cmd(
+        const aparse_arg *arg, 
+        void *data)
+{
+    static const char cmd_json[] = "{\"cmd\":\"devices\"}";
+    int server_fd = -1;
+
+    (void)arg;
+    (void)data;
+
+    server_fd = adbc__connect_server();
+    adbc__send_json(server_fd, cmd_json, sizeof(cmd_json) - 1);
+    for(;;)
+    {
+        char *json = NULL;
+        size_t json_len = 0;
+        yyjson_read_err read_err = {0};
+        yyjson_doc *doc = NULL;
+        yyjson_val *root = NULL;
+        yyjson_val *type = NULL;
+        const char *type_str = NULL;
+
+        adbc__recv_json(server_fd, &json, &json_len);
+        
+        doc = yyjson_read_opts(
+                json,
+                json_len,
+                0,
+                NULL,
+                &read_err);
+
+        if(!doc)
+        {
+            error("failed to parse json payload");
+            info("reason: %s, at %zu byte",
+                    read_err.msg,
+                    read_err.pos);
+            goto cleanup;
+        }
+
+        root = yyjson_doc_get_root(doc);
+        if(!yyjson_is_obj(root))
+        {
+            error("malformed json payload");
+            goto cleanup;
+        }
+        
+        type = yyjson_obj_get(root, "type");
+        if(!yyjson_is_str(type))
+        {
+            error("expected type to be a string");
+            goto cleanup;
+        }
+
+        type_str = yyjson_get_str(type);
+        if(strcmp(type_str, "log") == 0)
+        {
+            yyjson_val *level = yyjson_obj_get(root, "level");
+            yyjson_val *msg = yyjson_obj_get(root, "msg");
+            const char *level_str = yyjson_get_str(level);
+
+            if(strcmp(level_str, "debug") == 0)
+                debug("%s", yyjson_get_str(msg));
+            else if(strcmp(level_str, "info") == 0)
+                info("%s", yyjson_get_str(msg));
+            else if(strcmp(level_str, "warn") == 0)
+                warn("%s", yyjson_get_str(msg));
+            else if(strcmp(level_str, "error") == 0)
+                debug("%s", yyjson_get_str(msg));
+            
+        } else if(strcmp(type_str, "result") == 0) {
+            yyjson_val *devices = yyjson_obj_get(root, "devices");
+            yyjson_val *item = NULL;
+            size_t idx = 0;
+            size_t max = 0;
+
+            yyjson_arr_foreach(devices, idx, max, item)
+                info("%s", yyjson_get_str(item));
+        } else {
+
+        }
+
+cleanup:
+        yyjson_doc_free(doc);
+        free(json);
+    }
+    close(server_fd);
+}
+
+
 
 int main(int argc, char **argv)
 {
@@ -407,6 +624,10 @@ int main(int argc, char **argv)
                 "kill-server", NULL, 
                 kill_server_cmd, &options, sizeof(options),  
                 "Kill the server if it is running"),
+        aparse_arg_subparser(
+                "devices", NULL, 
+                devices_cmd, &options, sizeof(options),  
+                "List connected devices"),
         aparse_arg_end_marker
     };
 
