@@ -14,10 +14,10 @@ All the implementations show below was based on Google's ADB source code commit 
 | push_sync | Push synchronization support | ❌ | |
 | apex | APEX package support | ❌ | |
 | ls_v2 | File listing protocol version 2 | ❌ | |
-| sendrecv_v2 | File transfer protocol version 2 | ⚠️ | Send is noe working temporarily with memory leak. Delayed ACK is still unsupported |
-| sendrecv_v2_brotli | File transfer v2 with Brotli compression | ⚠️ | Only receive was fully usable |
-| sendrecv_v2_lz4 | File transfer v2 with LZ4 compression | ⚠️ | Only receive was fully usable |
-| sendrecv_v2_zstd | File transfer v2 with Zstandard compression | ⚠️ | Only receive was fully usable |
+| sendrecv_v2 | File transfer protocol version 2 | ✅ | |
+| sendrecv_v2_brotli | File transfer v2 with Brotli compression | ✅ | |
+| sendrecv_v2_lz4 | File transfer v2 with LZ4 compression | ✅ | |
+| sendrecv_v2_zstd | File transfer v2 with Zstandard compression | ✅ | |
 | fixed_push_mkdir | Fixed directory creation during push | ❌ | |
 | abb | Android Bug/Debug Bridge (ABB) support | ❌ | |
 | fixed_push_symlink_timestamp | Preserve symlink timestamps during push | ❌ | |
@@ -25,12 +25,17 @@ All the implementations show below was based on Google's ADB source code commit 
 | remount_shell | Remount support through the shell | ❌ | |
 | track_app | Track application/package changes | ❌ | |
 | sendrecv_v2_dry_run_send | Dry-run mode for send/receive v2 transfers | ❌ | |
-| delayed_ack | Delayed acknowledgement support | ⚠️ | Only recieve was fully usable |
+| delayed_ack | Delayed acknowledgement support | ⚠️ | Send/Recieve were usable. Behaviour differ. See [more](#delayed-acknowledgement-ack) |
 | openscreen_mdns | OpenScreen mDNS device discovery | ❌ | |
 | devicetracker_proto_format | Device Tracker protocol format | ❌ | |
-| devraw | Raw device communication support | ❌ | |
+| devraw | Raw device communication support | ❌ | |so what 
 | app_info | Additional application information for tracking | ❌ | |
 | server_status | Server status reporting | ❌ | |
+
+## Implementation Notes
+### Delayed Acknowledgement (ACK)
+Send/Receive is fully usable, but the send-side ACK behaviour differs from Google's implementation.
+Instead of expecting an ACK after every send, we check for an ACK with a timeout and only block when our ASB (Available Send Bytes) is exhausted.
 
 ## Research
 [My research on the protocol](./docs)
