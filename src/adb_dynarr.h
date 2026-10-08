@@ -7,6 +7,9 @@
 
 #define adb__dynarr_foreach(a, type, v) \
     for(size_t i = 0; i < (a)->size; i++, (v) = ((type*)(a)->data)[i])
+#define adb__dynarr_foreach_rev(a, type, v) \
+    for(size_t i = (a)->size; i-- > 0; (v) = ((type*)(a)->data)[i])
+#define adb__dynarr_get(a, type, idx) ((((type*)(a)->data))[(idx)])
 
 typedef struct 
 {

@@ -509,7 +509,7 @@ static void kill_server_cmd(
         const aparse_arg *arg, 
         void *data)
 {
-    static const char json[] = "{\"cmd\":\"quit\"}";
+    static const char json[] = "{\"type\":\"cmd\",\"cmd\":\"quit\"}";
     (void)arg;
     (void)data;
     int fd = adbc__connect_server();
@@ -521,7 +521,7 @@ static void devices_cmd(
         const aparse_arg *arg, 
         void *data)
 {
-    static const char cmd_json[] = "{\"cmd\":\"devices\"}";
+    static const char cmd_json[] = "{\"type\":\"cmd\",\"cmd\":\"devices\"}";
     int server_fd = -1;
 
     (void)arg;
@@ -585,7 +585,7 @@ static void devices_cmd(
             else if(strcmp(level_str, "warn") == 0)
                 warn("%s", yyjson_get_str(msg));
             else if(strcmp(level_str, "error") == 0)
-                debug("%s", yyjson_get_str(msg));
+                error("%s", yyjson_get_str(msg));
             
         } else if(strcmp(type_str, "result") == 0) {
             yyjson_val *devices = yyjson_obj_get(root, "devices");
@@ -595,8 +595,10 @@ static void devices_cmd(
 
             yyjson_arr_foreach(devices, idx, max, item)
                 info("%s", yyjson_get_str(item));
+            break;
         } else {
-
+            error("unhandled packet type");
+            break;
         }
 
 cleanup:

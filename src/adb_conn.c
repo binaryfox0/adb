@@ -179,7 +179,10 @@ adb_error_t adb_conn_create_wireless_from_info(
 {
     if(!conn || !ctx || !info)
         return ADB_ERR_PARAM;
-    return adb__conn_from_sockaddr(conn, ctx, &info->addr);
+    return adb__conn_from_sockaddr(conn, ctx, 
+            info->have_ipv4 ? 
+                (const struct sockaddr*)&info->sin : 
+                (const struct sockaddr*)&info->sin6);
 }
 
 adb_error_t adb_conn_create_custom(

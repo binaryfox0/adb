@@ -21,7 +21,13 @@ typedef struct adb_ctx
 
     libusb_context *usb;
     adb__dynarr_t wired_infos;
+
     adb__dynarr_t wireless_infos;
+    size_t wireless_info_count;
+    adb__dynarr_t pair_winfos;
+    size_t pair_winfo_count;
+    adb__dynarr_t dev_winfos;
+    size_t dev_winfo_count;
 
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context drbg;

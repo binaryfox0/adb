@@ -32,7 +32,7 @@ adb_error_t adb_query_wireless(
 
 adb_error_t adb_find_wireless(
         adb_ctx_t *ctx,
-        const char *service_name,
+        const char *guid,
         adb_wireless_info_t **out_info);
 
 adb_error_t adb_find_wireless_pairing(
@@ -53,7 +53,4 @@ adb_error_t adb_wireless_info_endpoint(
         char *out_buf,
         const size_t size);
 
-void adb_wireless_info_destroy(
-        adb_wireless_info_t *info);
-         
 #endif

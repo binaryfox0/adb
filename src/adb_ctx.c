@@ -78,7 +78,16 @@ void adb_ctx_destroy(
         adb__wired_info_destroy(wired_info);
     adb__dynarr_foreach(&ctx->wireless_infos, adb_wireless_info_t*, wireless_info)
         adb__wireless_info_destroy(wireless_info);
+    adb__dynarr_foreach(&ctx->dev_winfos, adb_wireless_info_t*, wireless_info)
+        adb__wireless_info_destroy(wireless_info);
+    adb__dynarr_foreach(&ctx->pair_winfos, adb_wireless_info_t*, wireless_info)
+        adb__wireless_info_destroy(wireless_info);
+
     adb__dynarr_destroy(&ctx->wired_infos);
+    adb__dynarr_destroy(&ctx->wireless_infos);
+    adb__dynarr_destroy(&ctx->dev_winfos);
+    adb__dynarr_destroy(&ctx->pair_winfos);
+
     if((ctx->features & ADB__FEATURE_WIRED) != 0)
         libusb_exit(ctx->usb);
     adb__free(ctx);
