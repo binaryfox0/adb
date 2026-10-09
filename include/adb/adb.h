@@ -8,5 +8,6 @@
 #include <adb/adb_key.h>
 #include <adb/adb_pair.h>
 #include <adb/adb_conn.h>
+#include <adb/adb_sync.h>
 
 #endif

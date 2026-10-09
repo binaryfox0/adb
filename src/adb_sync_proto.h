@@ -1,5 +1,5 @@
-#ifndef ADB_SYNC_H
-#define ADB_SYNC_H
+#ifndef ADB_SYNC_PROTO_H
+#define ADB_SYNC_PROTO_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,28 +27,28 @@ typedef struct adb__sync
     adb__packet_reader_t pkt_reader;
 } adb__sync_t;
 
-ADB__NODISCARD adb_error_t adb__sync_open(
+ADB__NODISCARD adb_error_t adb__sync_proto_open(
         adb__sync_t *sync,
         adb_conn_t *conn);
 
-ADB__NODISCARD adb_error_t adb__sync_write(
+ADB__NODISCARD adb_error_t adb__sync_proto_write(
         adb__sync_t *sync,
         const void *payload,
         size_t payload_size);
 
-ADB__NODISCARD adb_error_t adb__sync_read(
+ADB__NODISCARD adb_error_t adb__sync_proto_read(
         adb__sync_t *sync);
 
-adb_error_t adb__sync_handle_okay(
+adb_error_t adb__proto_sync_handle_okay(
         adb__sync_t *sync);
 
-ADB__NODISCARD adb_error_t adb__sync_ack(
+ADB__NODISCARD adb_error_t adb__proto_sync_ack(
         adb__sync_t *sync);
 
-ADB__NODISCARD adb_error_t adb__sync_check_ack(
+ADB__NODISCARD adb_error_t adb__proto_sync_check_ack(
         adb__sync_t *sync);
 
-void adb__sync_close(
+void adb__sync_proto_close(
         adb__sync_t *sync);
 
 #endif

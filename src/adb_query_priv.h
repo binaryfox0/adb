@@ -3,7 +3,10 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+
 #include "adb_sock.h"
+#include "adb_dynarr.h"
+#include "adb_compiler.h"
 
 #define ADB__MDNS_NAME_LENGTH_MAX   256
 
@@ -34,6 +37,18 @@ typedef struct adb_wireless_info
     bool have_ipv4;
     bool have_ipv6;
 } adb_wireless_info_t;
+
+adb_error_t adb__query_mdns(
+        const char *name,
+        const size_t name_len,
+        const bool find_mode,
+        adb__dynarr_t *out,
+        size_t *out_count);
+
+ADB__INLINE bool adb__wireless_info_valid(
+        const adb_wireless_info_t *info) {
+    return info->have_ipv4 || info->have_ipv6;
+}
 
 void adb__wired_info_destroy(
         adb_wired_info_t *info);
