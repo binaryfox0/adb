@@ -15,6 +15,7 @@ adb_error_t adb_ctx_create(
     if(!ctx)
         return ADB_ERR_PARAM;
 
+    ADB__INFO("creating new library context");
     tmp = adb__calloc(1, sizeof(*tmp));
     if(!tmp)
         return ADB_ERR_NO_MEM;
@@ -59,7 +60,12 @@ adb_error_t adb_ctx_create(
             sizeof(adb_wired_info_t*));
     adb__dynarr_init(&tmp->wireless_infos, 
             sizeof(adb_wireless_info_t*));
+    adb__dynarr_init(&tmp->dev_winfos, 
+            sizeof(adb_wireless_info_t*));
+    adb__dynarr_init(&tmp->pair_winfos, 
+            sizeof(adb_wireless_info_t*));
     *ctx = tmp;
+    ADB__INFO("created library context successfully");
     return ADB_ERR_OK;
 }
 

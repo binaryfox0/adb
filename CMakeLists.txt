@@ -187,7 +187,13 @@ if(ADB_BUILD_CLI)
     endif()
 
     add_executable(adb-cli 
-        adb-cli/main.c)
+        adb-cli/adbc_utils.c
+        adb-cli/adbc_client.c
+        adb-cli/adbc_server.c
+        adb-cli/adbc_log.c
+        adb-cli/adbc_io.c
+        adb-cli/main.c
+    )
     target_link_libraries(adb-cli PRIVATE aparse adb qrcodegen yyjson)
     target_add_strict_flags(adb-cli)
     target_add_asan(adb-cli)

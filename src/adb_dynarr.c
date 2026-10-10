@@ -22,7 +22,7 @@ adb_error_t adb__dynarr_reserve(
     void *new_data = NULL;
     size_t old_capacity;
 
-    if (!a)
+    if (!a || a->elem_size == 0)
         return ADB_ERR_PARAM;
     if (capacity <= a->capacity)
         return ADB_ERR_OK;

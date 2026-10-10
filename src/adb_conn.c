@@ -232,24 +232,26 @@ adb_error_t adb__conn_upgrade_tls(
         adb_key_t *key)
 {
     adb_error_t res = ADB_ERR_OK;
+    adb__tls_t *tmp = NULL;
     if(!conn)
         return ADB_ERR_PARAM;
 
     res = adb__tls_create(
-            &conn->tls,
+            &tmp,
             conn->ctx,
             key,
             &conn->transport);
     if(res != ADB_ERR_OK)
         return res;
 
-    res = adb__tls_handshake(conn->tls);
+    res = adb__tls_handshake(tmp);
     if(res != ADB_ERR_OK)
     {
-        adb__tls_destroy(conn->tls);
+        adb__tls_destroy(tmp);
         return res;
     }
     
+    conn->tls = tmp;
     return ADB_ERR_OK;
 }
 

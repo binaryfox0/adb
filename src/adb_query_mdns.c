@@ -443,14 +443,11 @@ adb_error_t adb__query_mdns(
     uint64_t deadline = 0;
     uint64_t now = 0;
 
-    if(!out_count)
+    if(!name || name_len == 0 || 
+            name_len > (size_t)INT_MAX || !out || !out_count)
         return ADB_ERR_PARAM;
 
     *out_count = 0;
-
-    if(!name || name_len == 0 || name_len > (size_t)INT_MAX || !out)
-        return ADB_ERR_PARAM;
-
     sock = mdns_socket_open_ipv4(NULL);
     if(sock < 0)
     {
@@ -474,8 +471,6 @@ adb_error_t adb__query_mdns(
     }
 
     ADB__INFO("finding wireless device \"%.*s\"", (int)name_len, name);
-
-    /* Phase 1: discover service instances and resolve their SRV records. */
     deadline = adb__util_monotonic_ms() + adb__query_timeout_ms;
     for(;;)
     {
