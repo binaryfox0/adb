@@ -187,13 +187,15 @@ cleanup:
         adbc_log_err_errno("failed to close client socket");
 }
 
-static bool display_qr(
-        const char *payload)
+static bool adbc__display_qr(const char *payload)
 {
     uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
     uint8_t tmpbuf[qrcodegen_BUFFER_LEN_MAX];
+    bool status = false;
+    int size = 0;
+    int border = 4;
 
-    bool status = qrcodegen_encodeText(
+    status = qrcodegen_encodeText(
         payload, tmpbuf, qrcode,
         qrcodegen_Ecc_HIGH,
         qrcodegen_VERSION_MIN,
@@ -201,30 +203,39 @@ static bool display_qr(
         qrcodegen_Mask_AUTO,
         true
     );
-    if(!status)
+    if (!status)
         return false;
-    
-    int size = qrcodegen_getSize(qrcode);
-    int border = 4;
 
-    for (int y = -border; y < size + border; y++) 
+    size = qrcodegen_getSize(qrcode);
+
+    for (int y = -border; y < size + border; y += 2)
     {
-        for (int x = -border; x < size + border; x++) 
+        printf("\x1b[30;47m");
+        for (int x = -border; x < size + border; x++)
         {
-            bool isBlack = false;
-            if (x >= 0 && x < size && y >= 0 && y < size)
-                isBlack = qrcodegen_getModule(qrcode, x, y);
+            bool top = false;
+            bool bottom = false;
 
-            if (isBlack)
-                printf("  ");  // black
+            if (x >= 0 && x < size && y >= 0 && y < size)
+                top = qrcodegen_getModule(qrcode, x, y);
+
+            if (x >= 0 && x < size && y + 1 >= 0 && y + 1 < size)
+                bottom = qrcodegen_getModule(qrcode, x, y + 1);
+
+            if (top && bottom)
+                printf("\u2588");       /* Both black */
+            else if (top)
+                printf("\u2580");       /* Black top */
+            else if (bottom)
+                printf("\u2584");       /* Black bottom */
             else
-                printf("\u2588\u2588");            // white
+                printf(" ");            /* Both white */
         }
-        printf("\n");
+        printf("\x1b[0m\n");
     }
+
     return true;
 }
-
 static void adbc__client_log_callback(
         void *userdata,
         adb_log_level_t level,
@@ -281,7 +292,8 @@ void pair_qr_cmd(void *data)
     CHECK(adb_pair_qr_encode_payload(service_name, secret, 
                 payload, sizeof(payload)),
             res, cleanup, "failed to encode QR code");
-    display_qr(payload);
+
+    adbc__display_qr(payload);
 
     deadline = adbc_util_monotonic_ms() + ADBC__QR_PAIR_TIMEOUT;
     while(!conn_info)
