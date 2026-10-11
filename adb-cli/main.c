@@ -9,6 +9,19 @@ int main(int argc, char **argv)
     const char *level_str = NULL;
     adbc_cmd_options_t options = {0};
     aparse_list dispatch = {0};
+    aparse_arg pair_args[] =
+    {
+        aparse_arg_string(
+                "endpoint", 
+                NULL, 0, 
+                "Endpoint of the target device (host:port)"),
+        aparse_arg_string(
+                "code",
+                NULL, 0, 
+                "Pairing code for pairing"),
+        aparse_arg_end_marker
+    };
+
     aparse_arg commands[] =
     {
         aparse_arg_subparser(
@@ -20,17 +33,28 @@ int main(int argc, char **argv)
         aparse_arg_subparser(
                 "devices", NULL, devices_cmd, &options,
                 sizeof(options), "List connected devices"),
+        aparse_arg_subparser("pair", pair_args, pair_cmd, 
+                &options, sizeof(options), 
+                "Pair with a device for secure TCP/IP communication",
+                adbc_cmd_options_t, endpoint, code),
         aparse_arg_subparser("pair-qr", NULL, pair_qr_cmd, 
                 &options, sizeof(options), 
-                "pair with a device for secure TCP/IP communication using QR code"),
+                "Pair with a device for secure TCP/IP communication using QR code"),
         aparse_arg_end_marker
     };
     aparse_arg main_args[] =
     {
         aparse_arg_parser("command", commands),
         aparse_arg_option(
-                "-lvl", "--log-level", &level_str, 0,
-                APARSE_ARG_TYPE_STRING, "Set libadb and adb-cli log level"),
+                "-lvl", "--log-level", 
+                &level_str, 0,
+                APARSE_ARG_TYPE_STRING, 
+                "Set libadb and adb-cli log level"),
+        aparse_arg_option(
+                "-key", "--key-file", 
+                &options.opt_key, 0,
+                APARSE_ARG_TYPE_STRING, 
+                "Path to RSA-2048 PEM file"),
         aparse_arg_end_marker
     };
 
@@ -40,7 +64,7 @@ int main(int argc, char **argv)
 
     if(level_str != NULL)
     {
-        if(!adbc_log_level_parse(level_str, &options.level))
+        if(!adbc_log_level_parse(level_str, &options.opt_lvl))
         {
             ADBC_ERROR("unknown log level was specified");
             ADBC_INFO("supported: \"debug\", \"info\", \"warn\", \"error\", "
@@ -49,7 +73,7 @@ int main(int argc, char **argv)
         }
     }
     else
-        options.level = ADB_LOG_ERROR;
+        options.opt_lvl = ADB_LOG_ERROR;
 
     aparse_dispatch_all(&dispatch);
     return 0;

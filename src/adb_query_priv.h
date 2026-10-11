@@ -11,6 +11,7 @@
 #define ADB__MDNS_NAME_LENGTH_MAX   256
 
 typedef struct libusb_device libusb_device;
+typedef struct adb_ctx adb_ctx_t;
 typedef struct adb_wired_info
 {
     libusb_device *device;
@@ -44,6 +45,11 @@ adb_error_t adb__query_mdns(
         const bool find_mode,
         adb__dynarr_t *out,
         size_t *out_count);
+
+adb_error_t adb__find_wired_from_serial(
+        adb_ctx_t *ctx,
+        const char *target_serial,
+        adb_wired_info_t *out);
 
 ADB__INLINE bool adb__wireless_info_valid(
         const adb_wireless_info_t *info) {

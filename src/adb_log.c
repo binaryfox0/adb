@@ -7,6 +7,7 @@
 #include <errno.h>
 
 #include <mbedtls/error.h>
+#include <libusb.h>
 
 #include "adb_utils.h"
 
@@ -94,14 +95,27 @@ void adb__log(
     va_end(va);
 }
 
+void adb__log_err_libusb(
+        const int err,
+        const char *fmt,
+        ...)
+{
+    va_list va;
+    va_start(va, fmt);
+    adb__log_variadic(ADB_LOG_ERROR, fmt, va);
+    va_end(va);
+    ADB__DEBUG("reason: %s (%s)", 
+            libusb_error_name(err), 
+            libusb_strerror(err));
+}
+
 void adb__log_err_mbedtls(
         const int err,
         const char *fmt,
         ...)
 {
     va_list va;
-    char buf[256] = {0};
-
+    char buf[ADB__LOG_BUFFER_SIZE] = {0};
     va_start(va, fmt);
     adb__log_variadic(ADB_LOG_ERROR, fmt, va);
     va_end(va);
@@ -114,7 +128,6 @@ void adb__log_err_errno(
         ...)
 {
     va_list va;
-
     va_start(va, fmt);
     adb__log_variadic(ADB_LOG_ERROR, fmt, va);
     va_end(va);
@@ -127,7 +140,6 @@ void adb__log_err_adb(
         ...)
 {
     va_list va;
-
     va_start(va, fmt);
     adb__log_variadic(ADB_LOG_ERROR, fmt, va);
     va_end(va);
@@ -135,7 +147,6 @@ void adb__log_err_adb(
 }
 
 #define ADB__HEX_BYTES_PER_LINE 16
-
 
 void adb__log_multiline_text(
         const char *text,
@@ -253,7 +264,6 @@ void adb__log_payload(
         }
 
         buffer[pos] = '\0';
-
         adb__log_callback(
                 adb__log_userdata, 
                 ADB_LOG_DEBUG, 

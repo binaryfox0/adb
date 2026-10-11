@@ -84,6 +84,23 @@ static adb_error_t adb__conn_post_init(
     return ADB_ERR_OK;
 }
 
+adb_error_t adb_conn_create_wired(
+        adb_conn_t **conn,
+        adb_ctx_t *ctx,
+        const char *serial)
+{
+    adb_error_t res = ADB_ERR_OK;
+    adb_wired_info_t info = {0};
+    if(!conn || !ctx || !serial)
+        return ADB_ERR_PARAM;
+
+    res = adb__find_wired_from_serial(ctx, serial, &info);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    return adb_conn_create_wired_from_info(conn, ctx, &info);
+}
+
 adb_error_t adb_conn_create_wired_from_info(
         adb_conn_t **conn,
         adb_ctx_t *ctx,

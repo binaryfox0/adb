@@ -36,6 +36,11 @@ typedef enum
     ADB__CONN_PROFILE_COUNT
 } adb_conn_profile_t;
 
+adb_error_t adb_conn_create_wired(
+        adb_conn_t **conn,
+        adb_ctx_t *ctx,
+        const char *serial);
+
 adb_error_t adb_conn_create_wired_from_info(
         adb_conn_t **conn,
         adb_ctx_t *ctx,

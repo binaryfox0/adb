@@ -15,6 +15,11 @@ ADB__PRINTF(2, 3) void adb__log(
         ADB__PRINTF_FMT const char *fmt,
         ...);
 
+ADB__PRINTF(2, 3) void adb__log_err_libusb(
+        const int err,
+        const char *fmt,
+        ...);
+
 ADB__PRINTF(2, 3) void adb__log_err_mbedtls(
         const int err,
         ADB__PRINTF_FMT const char *fmt,

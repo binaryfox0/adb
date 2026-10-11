@@ -293,6 +293,9 @@ adb_error_t adb__tcp_transport_create(
     adb__tcp_transport_t *tcp = NULL;
     if(!transport || !addr)
         return ADB_ERR_PARAM;
+    
+    ADB__INFO("creating connection for wireless device %s",
+            adb__sockaddr_endpoint_local(addr));
 
     tcp = adb__calloc(1, sizeof(*tcp));
     if(!tcp)

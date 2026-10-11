@@ -31,7 +31,9 @@ static bool adb__find_adb_interface(
     if(res != 0)
     {
         ADB__WARN("failed to get active USB configuration");
-        ADB__DEBUG("reason: %s (%s)", libusb_error_name(res), libusb_strerror(res));
+        ADB__DEBUG("reason: %s (%s)", 
+                libusb_error_name(res), 
+                libusb_strerror(res));
         return false;
     }
 
@@ -61,7 +63,8 @@ static bool adb__find_adb_interface(
             const struct libusb_endpoint_descriptor *endpoint = &desc->endpoint[j];
             uint8_t direction = endpoint->bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK;
 
-            if((endpoint->bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) != LIBUSB_TRANSFER_TYPE_BULK)
+            if((endpoint->bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) 
+                    != LIBUSB_TRANSFER_TYPE_BULK)
                 continue;
             if(direction == LIBUSB_ENDPOINT_IN && !found_in)
             {
@@ -189,21 +192,26 @@ static adb_error_t adb__append_conn_info(
     {
         adb__usb_get_string(handle, desc->iManufacturer, 
                 manufacturer, sizeof(manufacturer),
-                desc->idVendor, desc->idProduct, "manufacturer");
+                desc->idVendor, desc->idProduct, 
+                "manufacturer");
         adb__usb_get_string(handle, desc->iProduct, 
                 product, sizeof(product),
-                desc->idVendor, desc->idProduct, "product");
+                desc->idVendor, desc->idProduct, 
+                "product");
         adb__usb_get_string(handle, desc->iSerialNumber, 
                 serial, sizeof(serial),
-                desc->idVendor, desc->idProduct, "serial");
+                desc->idVendor, desc->idProduct, 
+                "serial");
         libusb_close(handle);
     }
 
     if(!manufacturer[0] || !product[0])
     {
-        ADB__WARN("USB device contain no manufacturer/product name, using usb.ids database");
+        ADB__WARN("USB device contain no manufacturer/product name, "
+                "using usb.ids database");
         if(adb__lookup_usb(desc->idVendor, desc->idProduct,
-                manufacturer_tmp, sizeof(manufacturer_tmp),
+                manufacturer_tmp, 
+                sizeof(manufacturer_tmp),
                 product_tmp, sizeof(product_tmp)))
         {
             ADB__INFO("found USB device inside usb.ids, using usb.ids "
@@ -212,7 +220,8 @@ static adb_error_t adb__append_conn_info(
                 snprintf((char *)manufacturer, sizeof(manufacturer), 
                         "%s", manufacturer_tmp);
             if(!product[0])
-                snprintf((char *)product, sizeof(product), "%s", product_tmp);
+                snprintf((char *)product, sizeof(product), 
+                        "%s", product_tmp);
         } else {
             ADB__WARN("no USB device product was found in usb.ids database, "
                     "using libusb database");
@@ -268,10 +277,7 @@ adb_error_t adb_query_wired(
     if(usb_count < 0)
     {
         res = (int)usb_count;
-        ADB__ERROR("failed to get USB device list: %s", 
-                libusb_error_name(res));
-        ADB__DEBUG("reason: %s (%s)", 
-                libusb_error_name(res), libusb_strerror(res));
+        adb__log_err_libusb(res, "failed to get usb devices list");
         return ADB_ERR_USB;
     }
 
@@ -288,8 +294,10 @@ adb_error_t adb_query_wired(
         res = libusb_get_device_descriptor(device, &desc);
         if(res != 0)
         {
-            ADB__WARN("failed to get USB device descriptor: %s", 
-                    libusb_error_name(res));
+            ADB__WARN("failed to get USB device descriptor, skipping");
+            ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res),
+                    libusb_strerror(res));
             continue;
         }
 
@@ -321,3 +329,190 @@ adb_error_t adb_query_wired(
     return ret;
 }
 
+adb_error_t adb__find_wired_from_serial(
+        adb_ctx_t *ctx,
+        const char *target_serial,
+        adb_wired_info_t *out)
+{
+    adb_error_t ret = ADB_ERR_OK;
+    ssize_t usb_count = 0;
+    size_t target_len = 0;
+    int res = 0;
+    libusb_device **devices = NULL;
+    libusb_device_handle *handle = NULL;
+
+    if(!ctx || !target_serial || !out)
+        return ADB_ERR_PARAM;
+
+    memset(out, 0, sizeof(*out));
+    target_len = strlen(target_serial);
+
+    ADB__INFO("searching for wired ADB device with serial %s",
+            target_serial);
+
+    usb_count = libusb_get_device_list(ctx->usb, &devices);
+    if(usb_count < 0)
+    {
+        res = (int)usb_count;
+        adb__log_err_libusb(res, "failed to get USB devices list");
+        return ADB_ERR_USB;
+    }
+
+    ADB__DEBUG("enumerated %zd USB device(s)", usb_count);
+    for(ssize_t i = 0; i < usb_count; i++)
+    {
+        struct libusb_device_descriptor desc = {0};
+        unsigned char serial[256] = {0};
+        unsigned char manufacturer[256] = {0};
+        unsigned char product[256] = {0};
+        char manufacturer_tmp[256] = {0};
+        char product_tmp[256] = {0};
+        uint8_t itf_idx = 0;
+        uint8_t read_ep = 0;
+        uint8_t write_ep = 0;
+        int string_len = 0;
+
+        res = libusb_get_device_descriptor(devices[i], &desc);
+        if(res != 0)
+        {
+            ADB__WARN("failed to get USB device descriptor, skipping");
+            ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res),
+                    libusb_strerror(res));
+            continue;
+        }
+
+        if(desc.iSerialNumber == 0)
+            continue;
+
+        res = libusb_open(devices[i], &handle);
+        if(res != 0)
+        {
+            ADB__DEBUG("failed to open USB device %04X:%04X",
+                    desc.idVendor, desc.idProduct);
+            ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res), 
+                    libusb_strerror(res));
+            continue;
+        }
+
+        string_len = libusb_get_string_descriptor_ascii(
+                handle, desc.iSerialNumber,
+                serial, (int)(sizeof(serial) - 1));
+
+        if(string_len < 0)
+        {
+            ADB__DEBUG("failed to read serial for %04X:%04X",
+                    desc.idVendor, desc.idProduct);
+            ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(string_len),
+                    libusb_strerror(string_len));
+            libusb_close(handle);
+            handle = NULL;
+            continue;
+        }
+
+        if((size_t)string_len != target_len ||
+                memcmp(serial, target_serial, target_len) != 0)
+        {
+            libusb_close(handle);
+            handle = NULL;
+            continue;
+        }
+
+        libusb_close(handle);
+        handle = NULL;
+
+        ADB__DEBUG("matching serial found on %04X:%04X",
+                desc.idVendor, desc.idProduct);
+
+        if(!adb__find_adb_interface(devices[i],
+                    &itf_idx,
+                    &read_ep, &write_ep))
+        {
+            ADB__WARN("matching USB device has no usable ADB interface");
+            ret = ADB_ERR_UNSUPPORTED;
+            break;
+        }
+
+        res = libusb_open(devices[i], &handle);
+        if(res == 0)
+        {
+            adb__usb_get_string(handle, desc.iManufacturer,
+                    manufacturer, sizeof(manufacturer),
+                    desc.idVendor, desc.idProduct, 
+                    "manufacturer");
+            adb__usb_get_string(handle, desc.iProduct,
+                    product, sizeof(product),
+                    desc.idVendor, desc.idProduct, 
+                    "product");
+            libusb_close(handle);
+            handle = NULL;
+        }
+        else
+        {
+            ADB__DEBUG("failed to reopen USB device %04X:%04X",
+                    desc.idVendor, desc.idProduct);
+            ADB__INFO("reason: %s (%s)",
+                    libusb_error_name(res), 
+                    libusb_strerror(res));
+        }
+
+        if(!manufacturer[0] || !product[0])
+        {
+            ADB__WARN("USB device has no manufacturer/product name, "
+                    "using usb.ids database");
+
+            if(adb__lookup_usb(desc.idVendor, desc.idProduct,
+                        manufacturer_tmp, 
+                        sizeof(manufacturer_tmp),
+                        product_tmp, 
+                        sizeof(product_tmp)))
+            {
+                ADB__INFO("found USB device inside usb.ids database");
+
+                if(!manufacturer[0])
+                    snprintf((char *)manufacturer, sizeof(manufacturer),
+                            "%s", manufacturer_tmp);
+                if(!product[0])
+                    snprintf((char *)product, sizeof(product),
+                            "%s", product_tmp);
+            }
+            else
+                ADB__WARN("USB device not found in usb.ids database");
+        }
+
+        out->device = libusb_ref_device(devices[i]);
+        out->vendor_id = desc.idVendor;
+        out->product_id = desc.idProduct;
+        out->itf_idx = itf_idx;
+        out->read_ep = read_ep;
+        out->write_ep = write_ep;
+
+        snprintf((char *)out->manufacturer, sizeof(out->manufacturer),
+                "%s", manufacturer[0] ?
+                (char *)manufacturer : "unknown");
+        snprintf((char *)out->product, sizeof(out->product),
+                "%s", product[0] ? (char *)product : "unknown");
+        snprintf((char *)out->serial, sizeof(out->serial),
+                "%s", serial);
+
+        ADB__INFO("found ADB device %04X:%04X %s %s (%s)",
+                out->vendor_id, out->product_id,
+                out->manufacturer, out->product, out->serial);
+        break;
+    }
+
+    if(handle)
+        libusb_close(handle);
+
+    libusb_free_device_list(devices, 1);
+    if(ret == ADB_ERR_OK && !out->device)
+    {
+        ADB__INFO("no wired ADB device found with serial %s",
+                target_serial);
+        return ADB_ERR_NOT_FOUND;
+    }
+
+    return ret;
+}

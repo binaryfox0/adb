@@ -10,21 +10,28 @@
 #include <sys/socket.h>
 
 #include <yyjson.h>
-#include <adb/adb_ctx.h>
-#include <adb/adb_query.h>
+#include <adb/adb.h>
 
 #include "adbc_utils.h"
 #include "adbc_log.h"
 #include "adbc_io.h"
 #include "adbc_client.h"
+#include "adbc_dynarr.h"
+
+typedef struct
+{
+    bool reusable;
+    adb_conn_t *conn;
+} adbc__device_t;
 
 typedef struct
 {
     adb_ctx_t *ctx;
+    adbc_dynarr_t devices;
     bool quit;
 } adbc_server_ctx_t;
 
-static bool adbc_cmd_quit(adbc_server_ctx_t *ctx, const int client_fd)
+static bool adbc__cmd_quit(adbc_server_ctx_t *ctx, const int client_fd)
 {
     (void)client_fd;
     if(ctx == NULL)
@@ -33,7 +40,7 @@ static bool adbc_cmd_quit(adbc_server_ctx_t *ctx, const int client_fd)
     return true;
 }
 
-static bool adbc_cmd_devices(adbc_server_ctx_t *ctx, const int client_fd)
+static bool adbc__cmd_devices(adbc_server_ctx_t *ctx, const int client_fd)
 {
     bool result = false;
     adb_wired_info_t **wired = NULL;
@@ -44,12 +51,6 @@ static bool adbc_cmd_devices(adbc_server_ctx_t *ctx, const int client_fd)
     yyjson_mut_val *root = NULL;
     yyjson_mut_val *arr = NULL;
     char buffer[ADB_WIRELESS_INFO_ENDPOINT_SIZE] = {0};
-
-    if(ctx == NULL || ctx->ctx == NULL || client_fd < 0)
-    {
-        ADBC_ERROR("invalid devices command context");
-        return false;
-    }
 
     doc = yyjson_mut_doc_new(NULL);
     if(doc == NULL)
@@ -95,7 +96,8 @@ static bool adbc_cmd_devices(adbc_server_ctx_t *ctx, const int client_fd)
         }
     }
 
-    adb_query_wireless(ctx->ctx, &wireless, &wireless_count);
+    adb_query_wireless(ctx->ctx, &wireless, 
+            &wireless_count);
     if(wireless_count > 0U && wireless == NULL)
     {
         ADBC_ERROR("ADB wireless query returned an invalid device array");
@@ -111,7 +113,8 @@ static bool adbc_cmd_devices(adbc_server_ctx_t *ctx, const int client_fd)
         }
 
         memset(buffer, 0, sizeof(buffer));
-        if(adb_wireless_info_endpoint(wireless[i], buffer, sizeof(buffer)) != ADB_ERR_OK)
+        if(adb_wireless_info_endpoint(wireless[i], 
+                    buffer, sizeof(buffer)) != ADB_ERR_OK)
         {
             ADBC_ERROR("failed to get wireless device endpoint");
             goto cleanup;
@@ -136,6 +139,28 @@ cleanup:
     return result;
 }
 
+static bool adbc__cmd_connect(
+        adbc_server_ctx_t *ctx,
+        const int client_fd)
+{
+    adbc__device_t *dev = NULL;
+    for(size_t i = 0; i < ctx->devices.size; i++)
+    {
+        dev = &((adbc__device_t*)ctx->devices.data)[i];
+        if(dev->reusable)
+            break;
+    }
+
+    if(!dev)
+    {
+        if(!adbc_dynarr_push(&ctx->devices, NULL))
+            return false;
+        dev = &((adbc__device_t*)ctx->devices.data)[ctx->devices.size - 1];
+    }
+    
+    
+}
+
 static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
 {
     static const struct {
@@ -143,8 +168,8 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
         bool (*handler)(adbc_server_ctx_t *, int);
     } handlers[] =
     {
-        { "quit", adbc_cmd_quit },
-        { "devices", adbc_cmd_devices }
+        { "quit", adbc__cmd_quit },
+        { "devices", adbc__cmd_devices }
     };
 
     bool result = false;
@@ -235,7 +260,8 @@ void start_server_cmd(void *data)
         return;
     }
 
-    if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) != 0)
+    if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &option, 
+                sizeof(option)) != 0)
     {
         adbc_log_err_errno("failed to set socket options");
         goto cleanup;
@@ -245,7 +271,8 @@ void start_server_cmd(void *data)
     address.sin_addr.s_addr = htonl(INADDR_ANY);
     address.sin_port = htons(ADBC_SERVER_PORT);
 
-    if(bind(fd, (const struct sockaddr *)&address, sizeof(address)) != 0)
+    if(bind(fd, (const struct sockaddr *)&address, 
+                sizeof(address)) != 0)
     {
         adbc_log_err_errno("failed to bind socket");
         goto cleanup;
@@ -257,7 +284,8 @@ void start_server_cmd(void *data)
         goto cleanup;
     }
 
-    adb_log_set(adbc__adb_log_callback, (void *)(intptr_t)-1, options->level);
+    adb_log_set(adbc_log_server_callback, 
+            (void *)(intptr_t)-1, options->opt_lvl);
     adb_ctx_create(&ctx.ctx);
     if(ctx.ctx == NULL)
     {
@@ -265,6 +293,8 @@ void start_server_cmd(void *data)
         goto cleanup;
     }
 
+    ctx.quit = false;
+    adbc_dynarr_init(&ctx.devices, sizeof(adbc__device_t));
     while(!ctx.quit)
     {
         client_fd = accept(fd, NULL, NULL);

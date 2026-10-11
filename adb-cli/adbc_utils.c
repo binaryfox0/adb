@@ -1,10 +1,9 @@
 #include "adbc_utils.h"
 
+#include <stdlib.h>
 #ifdef _WIN32
 #   include <windows.h>
 #else
-#   include <arpa/inet.h>
-#   include <stdlib.h>
 #   include <pwd.h>
 #   include <unistd.h>
 #   include <time.h>

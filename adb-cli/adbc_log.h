@@ -25,7 +25,17 @@ typedef struct yyjson_val yyjson_val;
 
 ADB__PRINTF(1, 2) void adbc_log_err_errno(ADB__PRINTF_FMT const char *fmt, ...);
 void adbc_log_debug_json(yyjson_val *item, const char *fmt, ...);
-void adbc__adb_log_callback(void *userdata, adb_log_level_t level,
+void adbc_log_server_callback(
+        void *userdata, 
+        adb_log_level_t level,
+        const char *msg);
+
+bool adbc_log_handle_server(
+        yyjson_val *root);
+
+void adbc_log_client_callback(
+        void *userdata,
+        adb_log_level_t level,
         const char *msg);
 bool adbc_log_level_parse(const char *level_str, adb_log_level_t *out_level);
 

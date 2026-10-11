@@ -71,7 +71,8 @@ static void adbc_log_debug_json_impl(yyjson_val *item, const int depth)
             break;
 
         case YYJSON_TYPE_STR:
-            ADBC_DEBUG("\"%s\"", yyjson_get_str(item) != NULL ? yyjson_get_str(item) : "");
+            ADBC_DEBUG("\"%s\"", yyjson_get_str(item) != NULL ? 
+                    yyjson_get_str(item) : "");
             break;
 
         case YYJSON_TYPE_NUM:
@@ -126,7 +127,7 @@ bool adbc_log_level_parse(const char *level_str, adb_log_level_t *out_level)
     return false;
 }
 
-void adbc__adb_log_callback(
+void adbc_log_server_callback(
         void *userdata,
         adb_log_level_t level,
         const char *msg)
@@ -136,36 +137,29 @@ void adbc__adb_log_callback(
     yyjson_mut_doc *doc = NULL;
     yyjson_mut_val *root = NULL;
 
-    if(log_fd < 0)
+    switch(level)
     {
-        switch(level)
-        {
-            case ADB_LOG_DEBUG: ADBC_DEBUG("%s", message); break;
-            case ADB_LOG_INFO:  ADBC_INFO("%s", message); break;
-            case ADB_LOG_WARN:  ADBC_WARN("%s", message); break;
-            case ADB_LOG_ERROR: ADBC_ERROR("%s", message); break;
-            case ADB__LOG_COUNT:
-            default:
-                ADBC_WARN("unknown ADB log level %d: %s", (int)level, message);
-                break;
-        }
-        return;
+        case ADB_LOG_DEBUG: ADBC_DEBUG("%s", message); break;
+        case ADB_LOG_INFO:  ADBC_INFO("%s", message); break;
+        case ADB_LOG_WARN:  ADBC_WARN("%s", message); break;
+        case ADB_LOG_ERROR: ADBC_ERROR("%s", message); break;
+        case ADB__LOG_COUNT:
+        default: break;
     }
-
-    if(log_fd > INT_MAX || (unsigned)level >= (unsigned)ADB__LOG_COUNT ||
-            adbc__log_level_strs[(size_t)level] == NULL)
+    if(log_fd < 0)
         return;
 
     doc = yyjson_mut_doc_new(NULL);
-    if(doc == NULL)
+    if(!doc)
         return;
 
     root = yyjson_mut_obj(doc);
-    if(root == NULL)
+    if(!root)
         goto cleanup;
 
     yyjson_mut_doc_set_root(doc, root);
-    if(!yyjson_mut_obj_add_str(doc, root, "type", "log") ||
+    if(
+            !yyjson_mut_obj_add_str(doc, root, "type", "log") ||
             !yyjson_mut_obj_add_str(doc, root, "level",
                 adbc__log_level_strs[(size_t)level]) ||
             !yyjson_mut_obj_add_str(doc, root, "msg", message))
@@ -176,3 +170,62 @@ void adbc__adb_log_callback(
 cleanup:
     yyjson_mut_doc_free(doc);
 }
+
+bool adbc_log_handle_server(
+        yyjson_val *root)
+{
+    yyjson_val *level = yyjson_obj_get(root, "level");
+    yyjson_val *msg = yyjson_obj_get(root, "msg");
+    const char *level_str = NULL;
+    const char *message = NULL;
+
+    if(!yyjson_is_str(level) || !yyjson_is_str(msg))
+    {
+        ADBC_ERROR("malformed server log packet");
+        return false;
+    }
+
+    level_str = yyjson_get_str(level);
+    message = yyjson_get_str(msg);
+    if(strcmp(level_str, "debug") == 0)
+        ADBC_DEBUG("%s", message);
+    else if(strcmp(level_str, "info") == 0)
+        ADBC_INFO("%s", message);
+    else if(strcmp(level_str, "warn") == 0)
+        ADBC_WARN("%s", message);
+    else if(strcmp(level_str, "error") == 0)
+        ADBC_ERROR("%s", message);
+    else
+        ADBC_WARN("unknown: %s", level_str);
+
+    return true;
+}
+
+void adbc_log_client_callback(
+        void *userdata,
+        adb_log_level_t level,
+        const char *msg)
+{
+    (void)userdata;
+    switch(level)
+    {
+        case ADB_LOG_DEBUG: 
+            aparse_log("adb", APARSE__DEBUG_LABEL, "%s", msg);
+            break;
+
+        case ADB_LOG_INFO: 
+            aparse_log("adb", APARSE__INFO_LABEL, "%s", msg);
+            break;
+
+        case ADB_LOG_WARN: 
+            aparse_log("adb", APARSE__WARN_LABEL, "%s", msg);
+            break;
+        case ADB_LOG_ERROR:
+            aparse_log("adb", APARSE__ERROR_LABEL, "%s", msg);
+            break;
+
+        case ADB__LOG_COUNT:
+        default: break;
+    }
+}
+
