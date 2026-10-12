@@ -9,8 +9,6 @@
 #include "adb_log_priv.h"
 #include "adb_utils.h"
 
-#define ADB__PATH_MAX                   1024
-
 #define ADB__SYNC_ID_RECV_V1 ADB__CMD_ENCODE('R', 'E', 'C', 'V')
 #define ADB__SYNC_ID_RECV_V2 ADB__CMD_ENCODE('R', 'C', 'V', '2')
 #define ADB__SYNC_ID_SEND_V2 ADB__CMD_ENCODE('S', 'N', 'D', '2')
@@ -81,13 +79,13 @@ static adb_error_t adb__send_request(
 {
     size_t path_len = 0;
     adb__sync_request_t req = {0};
-    uint8_t req_payload[sizeof(req) + ADB__PATH_MAX] = {0};
+    uint8_t req_payload[sizeof(req) + ADB_PATH_MAX] = {0};
     void *req_cursor = NULL;
     if(!sync || !path)
         return ADB_ERR_PARAM;
 
     path_len = strlen(path);
-    if(path_len > ADB__PATH_MAX)
+    if(path_len > ADB_PATH_MAX)
         return ADB_ERR_TOO_LONG;
 
     req.id = id;
@@ -111,7 +109,7 @@ static adb_error_t adb__send_recv_v2(
 
     uint8_t req_payload[
             sizeof(req) +
-            ADB__PATH_MAX +
+            ADB_PATH_MAX +
             sizeof(msg)] = {0};
     uint8_t *req_cursor = NULL;
 
@@ -119,7 +117,7 @@ static adb_error_t adb__send_recv_v2(
         return ADB_ERR_PARAM;
 
     path_len = strlen(path);
-    if(path_len > ADB__PATH_MAX)
+    if(path_len > ADB_PATH_MAX)
         return ADB_ERR_TOO_LONG;
     
     req_size = sizeof(req) + path_len + sizeof(msg);
@@ -556,7 +554,7 @@ static adb_error_t adb__send_send_v2(
 
     uint8_t req_payload[
             sizeof(req) +
-            ADB__PATH_MAX +
+            ADB_PATH_MAX +
             sizeof(msg)] = {0};
     uint8_t *req_cursor = NULL;
 
@@ -564,7 +562,7 @@ static adb_error_t adb__send_send_v2(
         return ADB_ERR_PARAM;
 
     path_len = strlen(path);
-    if(path_len > ADB__PATH_MAX)
+    if(path_len > ADB_PATH_MAX)
         return ADB_ERR_TOO_LONG;
     
     req_size = sizeof(req) + path_len + sizeof(msg);

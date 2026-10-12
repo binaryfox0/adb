@@ -1,7 +1,11 @@
+
 #include "adbc_server.h"
 
-#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
 
 #include <unistd.h>
@@ -26,158 +30,290 @@ typedef struct
 
 typedef struct
 {
-    adb_ctx_t *ctx;
+    adb_ctx_t *adb_ctx;
     adbc_dynarr_t devices;
     bool quit;
 } adbc_server_ctx_t;
 
-static bool adbc__cmd_quit(adbc_server_ctx_t *ctx, const int client_fd)
+typedef const char *adbc__server_error_t;
+
+typedef adbc__server_error_t (*adbc__server_cmd_handler_fn)(
+        adbc_server_ctx_t *ctx,
+        yyjson_val *req_root,
+        yyjson_mut_doc *response_doc,
+        yyjson_mut_val *response_root);
+
+static adbc__server_error_t adbc__json_get_str(
+        yyjson_val *obj,
+        const char *key,
+        bool required,
+        const char **out)
 {
-    (void)client_fd;
-    if(ctx == NULL)
-        return false;
-    ctx->quit = true;
-    return true;
+    yyjson_val *child = NULL;
+
+    if(out == NULL)
+        return "invalid string output";
+
+    *out = NULL;
+    child = obj != NULL ? yyjson_obj_get(obj, key) : NULL;
+
+    if(child == NULL)
+    {
+        if(required)
+            ADBC_ERROR("no object was found with key \"%s\"", key);
+        return required ? "missing required string field" : NULL;
+    }
+
+    if(!yyjson_is_str(child))
+    {
+        ADBC_ERROR("object with key \"%s\" was not a string", key);
+        return "field must be a string";
+    }
+
+    *out = yyjson_get_str(child);
+    return NULL;
 }
 
-static bool adbc__cmd_devices(adbc_server_ctx_t *ctx, const int client_fd)
+static adbc__server_error_t adbc__cmd_quit(
+        adbc_server_ctx_t *ctx,
+        yyjson_val *req_root,
+        yyjson_mut_doc *response_doc,
+        yyjson_mut_val *response_root)
 {
-    bool result = false;
+    (void)req_root;
+    (void)response_doc;
+    (void)response_root;
+
+    if(ctx == NULL)
+        return "invalid server context";
+
+    ctx->quit = true;
+    return NULL;
+}
+
+static adbc__server_error_t adbc__cmd_devices(
+        adbc_server_ctx_t *ctx,
+        yyjson_val *req_root,
+        yyjson_mut_doc *response_doc,
+        yyjson_mut_val *response_root)
+{
+    adb_error_t res = ADB_ERR_OK;
     adb_wired_info_t **wired = NULL;
     size_t wired_count = 0U;
     adb_wireless_info_t **wireless = NULL;
     size_t wireless_count = 0U;
-    yyjson_mut_doc *doc = NULL;
-    yyjson_mut_val *root = NULL;
     yyjson_mut_val *arr = NULL;
     char buffer[ADB_WIRELESS_INFO_ENDPOINT_SIZE] = {0};
 
-    doc = yyjson_mut_doc_new(NULL);
-    if(doc == NULL)
-    {
-        ADBC_ERROR("failed to allocate JSON document");
-        goto cleanup;
-    }
+    (void)req_root;
 
-    root = yyjson_mut_obj(doc);
-    if(root == NULL)
-        goto cleanup;
-    yyjson_mut_doc_set_root(doc, root);
+    if(ctx == NULL || response_doc == NULL || response_root == NULL)
+        return "invalid devices command arguments";
 
-    if(!yyjson_mut_obj_add_str(doc, root, "type", "result"))
-        goto cleanup;
-
-    arr = yyjson_mut_arr(doc);
+    arr = yyjson_mut_arr(response_doc);
     if(arr == NULL)
-        goto cleanup;
+        return "out of memory while creating device list";
 
-    /* Consume wired query results before the wireless query can reuse storage. */
-    adb_query_wired(ctx->ctx, &wired, &wired_count);
+    res = adb_query_wired(ctx->adb_ctx, 
+            &wired, &wired_count);
+    if(res == ADB_ERR_UNSUPPORTED)
+        ADBC_WARN("wired ADB devices query is not supported");
+    else if(res == ADB_ERR_UNIMPLEMENTED)
+        ADBC_WARN("libadb has no implementation for wired query");
+    else if(res != ADB_ERR_OK)
+        return "failed to query wired ADB devices";
+
     if(wired_count > 0U && wired == NULL)
-    {
-        ADBC_ERROR("ADB wired query returned an invalid device array");
-        goto cleanup;
-    }
+        return "ADB wired query returned an invalid device array";
 
     for(size_t i = 0U; i < wired_count; i++)
     {
         const char *serial = NULL;
-        if(wired[i] == NULL)
-        {
-            ADBC_ERROR("ADB wired query returned a null device");
-            goto cleanup;
-        }
 
-        serial = adb_wired_info_serial(wired[i]);
-        if(serial == NULL || !yyjson_mut_arr_add_str(doc, arr, serial))
-        {
-            ADBC_ERROR("failed to add wired device to JSON result");
-            goto cleanup;
-        }
+        if(wired[i] == NULL ||
+                (serial = adb_wired_info_serial(wired[i])) == NULL)
+            return "failed to get wired device serial";
+
+        if(!yyjson_mut_arr_add_str(response_doc, arr, serial))
+            return "out of memory while adding wired device";
     }
 
-    adb_query_wireless(ctx->ctx, &wireless, 
-            &wireless_count);
+    adb_query_wireless(ctx->adb_ctx, 
+            &wireless, &wireless_count);
     if(wireless_count > 0U && wireless == NULL)
-    {
-        ADBC_ERROR("ADB wireless query returned an invalid device array");
-        goto cleanup;
-    }
+        return "ADB wireless query returned an invalid device array";
 
     for(size_t i = 0U; i < wireless_count; i++)
     {
         if(wireless[i] == NULL)
-        {
-            ADBC_ERROR("ADB wireless query returned a null device");
-            goto cleanup;
-        }
+            return "ADB wireless query returned a null device";
 
         memset(buffer, 0, sizeof(buffer));
         if(adb_wireless_info_endpoint(wireless[i], 
                     buffer, sizeof(buffer)) != ADB_ERR_OK)
-        {
-            ADBC_ERROR("failed to get wireless device endpoint");
-            goto cleanup;
-        }
+            return "failed to get wireless device endpoint";
 
         buffer[sizeof(buffer) - 1U] = '\0';
-        if(!yyjson_mut_arr_add_str(doc, arr, buffer))
+        if(!yyjson_mut_arr_add_str(response_doc, arr, buffer))
+            return "out of memory while adding wireless device";
+    }
+
+    if(!yyjson_mut_obj_add_val(response_doc, response_root, 
+                "devices", arr))
+        return "failed to add devices to JSON response";
+
+    return NULL;
+}
+
+static adbc__server_error_t adbc__cmd_connect(
+        adbc_server_ctx_t *ctx,
+        yyjson_val *req_root,
+        yyjson_mut_doc *response_doc,
+        yyjson_mut_val *response_root)
+{
+    adbc__server_error_t error = NULL;
+    const char *serial = NULL;
+    const char *key_path = NULL;
+    const char *home_dir = NULL;
+    char key_path_buffer[4096] = {0};
+    char host[ADBC_IP_LENGTH_MAX] = {0};
+    int path_length = 0;
+    uint16_t port = 0U;
+    adb_key_t *key = NULL;
+    adb_error_t res = ADB_ERR_OK;
+    adbc__device_t *dev = NULL;
+
+    (void)response_doc;
+    (void)response_root;
+
+    if(ctx == NULL)
+        return "invalid server context";
+
+    error = adbc__json_get_str(req_root, "serial", true, &serial);
+    if(error != NULL)
+        return error;
+
+    if(serial[0] == '\0')
+        return "field 'serial' must not be empty";
+
+    error = adbc__json_get_str(req_root, "key_path", false, &key_path);
+    if(error != NULL)
+        return error;
+
+    if(key_path == NULL)
+    {
+        home_dir = adbc_util_home_dir();
+        if(home_dir == NULL)
+            return "failed to determine home directory";
+
+        path_length = snprintf(key_path_buffer, sizeof(key_path_buffer),
+                "%s/.android/adbkey", home_dir);
+        if(path_length < 0 || (size_t)path_length >= sizeof(key_path_buffer))
+            return "default ADB key path is too long";
+
+        key_path = key_path_buffer;
+    }
+    else if(key_path[0] == '\0')
+        return "field 'key_path' must not be empty";
+
+    res = adb_key_load(&key, ctx->adb_ctx, key_path);
+    if(res != ADB_ERR_OK || key == NULL)
+    {
+        error = "failed to load ADB private key";
+        goto cleanup;
+    }
+
+    for(size_t i = 0U; i < ctx->devices.size; i++)
+    {
+        adbc__device_t *candidate =
+            &((adbc__device_t *)ctx->devices.data)[i];
+
+        if(candidate->reusable)
         {
-            ADBC_ERROR("failed to add wireless device to JSON result");
-            goto cleanup;
+            dev = candidate;
+            break;
         }
     }
 
-    if(!yyjson_mut_obj_add_val(doc, root, "devices", arr))
-        goto cleanup;
-
-    result = adbc_send_json(client_fd, doc);
-
-cleanup:
-    if(doc != NULL)
-        yyjson_mut_doc_free(doc);
-    return result;
-}
-
-static bool adbc__cmd_connect(
-        adbc_server_ctx_t *ctx,
-        const int client_fd)
-{
-    adbc__device_t *dev = NULL;
-    for(size_t i = 0; i < ctx->devices.size; i++)
-    {
-        dev = &((adbc__device_t*)ctx->devices.data)[i];
-        if(dev->reusable)
-            break;
-    }
-
-    if(!dev)
+    if(dev == NULL)
     {
         if(!adbc_dynarr_push(&ctx->devices, NULL))
-            return false;
-        dev = &((adbc__device_t*)ctx->devices.data)[ctx->devices.size - 1];
+        {
+            error = "out of memory while allocating device slot";
+            goto cleanup;
+        }
+
+        dev = &((adbc__device_t *)ctx->devices.data)
+            [ctx->devices.size - 1U];
+        memset(dev, 0, sizeof(*dev));
     }
-    
-    
+
+    dev->reusable = false;
+
+    if(adbc_util_parse_endpoint(serial, 
+                host, sizeof(host), &port))
+        res = adb_conn_create_wireless(&dev->conn, 
+                ctx->adb_ctx, host, port);
+    else
+    {
+        ADBC_DEBUG("serial is not a network endpoint; "
+                "attempting USB connection");
+        res = adb_conn_create_wired(&dev->conn, ctx->adb_ctx, serial);
+    }
+
+    if(res != ADB_ERR_OK)
+    {
+        error = "failed to create ADB connection";
+        goto cleanup;
+    }
+
+    res = adb_handshake(dev->conn, key);
+    if(res != ADB_ERR_OK)
+    {
+        error = "ADB handshake failed";
+        goto cleanup;
+    }
+
+cleanup:
+    if(key != NULL)
+        adb_key_destroy(key);
+
+    if(error != NULL && dev != NULL)
+    {
+        if(dev->conn != NULL)
+        {
+            adb_conn_destroy(dev->conn);
+            dev->conn = NULL;
+        }
+
+        dev->reusable = true;
+    }
+
+    return error;
 }
 
 static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
 {
-    static const struct {
+    static const struct
+    {
         const char *cmd;
-        bool (*handler)(adbc_server_ctx_t *, int);
+        adbc__server_cmd_handler_fn handler;
     } handlers[] =
     {
         { "quit", adbc__cmd_quit },
-        { "devices", adbc__cmd_devices }
+        { "devices", adbc__cmd_devices },
+        { "connect", adbc__cmd_connect }
     };
 
     bool result = false;
-    yyjson_doc *doc = NULL;
-    yyjson_val *root = NULL;
-    yyjson_val *cmd = NULL;
-    yyjson_val *type = NULL;
-    const char *cmd_str = NULL;
+    bool found = false;
+    yyjson_doc *req_doc = NULL;
+    yyjson_val *req_root = NULL;
+    yyjson_mut_doc *response_doc = NULL;
+    yyjson_mut_val *response_root = NULL;
+    const char *type = NULL;
+    const char *cmd = NULL;
+    adbc__server_error_t error = NULL;
 
     if(ctx == NULL || client_fd < 0)
     {
@@ -185,55 +321,103 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
         return false;
     }
 
-    if(!adbc_recv_json(client_fd, &doc))
+    response_doc = yyjson_mut_doc_new(NULL);
+    if(response_doc == NULL)
     {
-        ADBC_ERROR("failed to receive command frame");
-        return false;
+        ADBC_ERROR("failed to allocate response JSON document");
+        goto cleanup;
     }
 
-    root = yyjson_doc_get_root(doc);
-    if(!yyjson_is_obj(root))
+    response_root = yyjson_mut_obj(response_doc);
+    if(response_root == NULL)
+    {
+        ADBC_ERROR("failed to allocate response JSON object");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_set_root(response_doc, response_root);
+    if(!yyjson_mut_obj_add_str(response_doc, response_root, "type", "result"))
+    {
+        ADBC_ERROR("failed to initialize JSON response");
+        goto cleanup;
+    }
+
+    if(!adbc_recv_json(client_fd, &req_doc))
+    {
+        error = "failed to receive command frame";
+        goto respond;
+    }
+
+    req_root = yyjson_doc_get_root(req_doc);
+    if(!yyjson_is_obj(req_root))
     {
         ADBC_ERROR("malformed server JSON");
-        return false;
+        error = "expected a JSON object";
+        goto respond;
     }
 
-    type = yyjson_obj_get(root, "type");
-    if(!yyjson_is_str(type))
+    error = adbc__json_get_str(req_root, "type", true, &type);
+    if(error != NULL)
+        goto respond;
+
+    if(strcmp(type, "cmd") != 0)
     {
-        ADBC_ERROR("expected type to be a string");
-        goto cleanup;
+        ADBC_ERROR("unexpected packet type: \"%s\"", type);
+        error = "unexpected packet type";
+        goto respond;
     }
 
-    if(strcmp(yyjson_get_str(type), "cmd") != 0)
-    {
-        ADBC_ERROR("unexpected packet type");
-        ADBC_INFO("expected: \"cmd\", got: \"%s\"", yyjson_get_str(type));
-        goto cleanup;
-    }
+    error = adbc__json_get_str(req_root, "cmd", true, &cmd);
+    if(error != NULL)
+        goto respond;
 
-    cmd = yyjson_obj_get(root, "cmd");
-    if(!yyjson_is_str(cmd))
-    {
-        ADBC_ERROR("expected cmd to be a string");
-        goto cleanup;
-    }
-
-    cmd_str = yyjson_get_str(cmd);
     for(size_t i = 0U; i < ADBC_ARRSZ(handlers); i++)
     {
-        if(strcmp(cmd_str, handlers[i].cmd) == 0)
+        if(strcmp(cmd, handlers[i].cmd) == 0)
         {
-            result = handlers[i].handler(ctx, client_fd);
-            goto cleanup;
+            found = true;
+            error = handlers[i].handler(
+                    ctx, req_root, response_doc, response_root);
+            break;
         }
     }
 
-    ADBC_ERROR("unknown command: %s", cmd_str);
+    if(!found)
+    {
+        ADBC_ERROR("unknown command: %s", cmd);
+        error = "unknown command";
+    }
+
+respond:
+    if(error != NULL)
+    {
+        ADBC_WARN("command failed: %s", error);
+        if(!yyjson_mut_obj_add_str(response_doc, response_root, 
+                    "result", "error") ||
+                !yyjson_mut_obj_add_str(response_doc, response_root, 
+                    "error", error))
+        {
+            ADBC_ERROR("failed to construct JSON error response");
+            goto cleanup;
+        }
+    }
+    else if(!yyjson_mut_obj_add_str(response_doc, response_root, 
+                "result", "success"))
+    {
+        ADBC_ERROR("failed to construct JSON success response");
+        goto cleanup;
+    }
+
+    result = adbc_send_json(client_fd, response_doc);
+    if(!result)
+        ADBC_ERROR("failed to send command response");
 
 cleanup:
-    if(doc != NULL)
-        yyjson_doc_free(doc);
+    if(req_doc != NULL)
+        yyjson_doc_free(req_doc);
+    if(response_doc != NULL)
+        yyjson_mut_doc_free(response_doc);
+
     return result;
 }
 
@@ -246,13 +430,14 @@ void start_server_cmd(void *data)
     int client_fd = -1;
     int option = 1;
 
-    if(!options)
+    if(options == NULL)
     {
         ADBC_ERROR("missing server options");
         return;
     }
 
     ADBC_INFO("starting server on port %d", ADBC_SERVER_PORT);
+
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if(fd < 0)
     {
@@ -260,8 +445,7 @@ void start_server_cmd(void *data)
         return;
     }
 
-    if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &option, 
-                sizeof(option)) != 0)
+    if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) != 0)
     {
         adbc_log_err_errno("failed to set socket options");
         goto cleanup;
@@ -271,8 +455,7 @@ void start_server_cmd(void *data)
     address.sin_addr.s_addr = htonl(INADDR_ANY);
     address.sin_port = htons(ADBC_SERVER_PORT);
 
-    if(bind(fd, (const struct sockaddr *)&address, 
-                sizeof(address)) != 0)
+    if(bind(fd, (const struct sockaddr *)&address, sizeof(address)) != 0)
     {
         adbc_log_err_errno("failed to bind socket");
         goto cleanup;
@@ -284,17 +467,16 @@ void start_server_cmd(void *data)
         goto cleanup;
     }
 
-    adb_log_set(adbc_log_server_callback, 
-            (void *)(intptr_t)-1, options->opt_lvl);
-    adb_ctx_create(&ctx.ctx);
-    if(ctx.ctx == NULL)
+    adb_log_set(adbc_log_server_callback, (void *)(intptr_t)-1, options->opt_lvl);
+    adb_ctx_create(&ctx.adb_ctx);
+    if(ctx.adb_ctx == NULL)
     {
         ADBC_ERROR("failed to create ADB context");
         goto cleanup;
     }
 
-    ctx.quit = false;
     adbc_dynarr_init(&ctx.devices, sizeof(adbc__device_t));
+
     while(!ctx.quit)
     {
         client_fd = accept(fd, NULL, NULL);
@@ -302,6 +484,7 @@ void start_server_cmd(void *data)
         {
             if(errno == EINTR)
                 continue;
+
             adbc_log_err_errno("failed to accept client");
             break;
         }
@@ -322,8 +505,19 @@ cleanup:
     adb_log_set_userdata((void *)(intptr_t)-1);
     if(client_fd >= 0)
         (void)close(client_fd);
-    if(ctx.ctx != NULL)
-        adb_ctx_destroy(ctx.ctx);
+
+    for(size_t i = 0U; i < ctx.devices.size; i++)
+    {
+        adbc__device_t *dev =
+            &((adbc__device_t *)ctx.devices.data)[i];
+
+        if(dev->conn != NULL)
+            adb_conn_destroy(dev->conn);
+    }
+
+    free(ctx.devices.data);
+    if(ctx.adb_ctx != NULL)
+        adb_ctx_destroy(ctx.adb_ctx);
     if(fd >= 0 && close(fd) != 0)
         adbc_log_err_errno("failed to close server socket");
 }

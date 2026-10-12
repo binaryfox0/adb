@@ -299,7 +299,7 @@ cleanup:
 void pair_cmd(void *data)
 {
     adbc_cmd_options_t *options = data;
-    char host[INET6_ADDRSTRLEN] = {0};
+    char host[ADBC_IP_LENGTH_MAX] = {0};
     uint16_t port = 0U;
     adb_error_t res = ADB_ERR_OK;
     adb_ctx_t *ctx = NULL;
@@ -308,7 +308,9 @@ void pair_cmd(void *data)
 
     adb_log_set(adbc_log_client_callback, NULL, options->opt_lvl);
 
-    if(!adbc_util_parse_endpoint(options->endpoint, host, sizeof(host), &port))
+    if(!adbc_util_parse_endpoint(
+                options->endpoint, 
+                host, sizeof(host), &port))
     {
         ADBC_ERROR("failed to parse endpoint \"%s\"", options->endpoint);
         ADBC_INFO("reason: expected a valid host:port endpoint");

@@ -5,6 +5,8 @@
 #include <adb/adb_error.h>
 #include <adb/adb_conn.h>
 
+#define ADB_PATH_MAX                   1024
+
 adb_error_t adb_sync_pull(
         adb_conn_t *conn,
         const char *remote_path,

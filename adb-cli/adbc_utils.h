@@ -14,7 +14,7 @@
     #include <arpa/inet.h>
 #endif
 
-#define ADBC_HOST_NAME_LENGTH_MAX INET6_ADDRSTRLEN
+#define ADBC_IP_LENGTH_MAX INET6_ADDRSTRLEN
 #define ADBC_ARRSZ(arr) (sizeof((arr)) / sizeof((arr)[0]))
 
 const char *adbc_util_home_dir(void);
