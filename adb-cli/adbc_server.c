@@ -24,12 +24,6 @@
 
 typedef struct
 {
-    bool reusable;
-    adb_conn_t *conn;
-} adbc__device_t;
-
-typedef struct
-{
     adb_ctx_t *adb_ctx;
     adbc_dynarr_t devices;
     bool quit;
@@ -181,7 +175,7 @@ static adbc__server_error_t adbc__cmd_connect(
     uint16_t port = 0U;
     adb_key_t *key = NULL;
     adb_error_t res = ADB_ERR_OK;
-    adbc__device_t *dev = NULL;
+    adb_conn_t **conn = NULL;
 
     (void)response_doc;
     (void)response_root;
@@ -189,14 +183,16 @@ static adbc__server_error_t adbc__cmd_connect(
     if(ctx == NULL)
         return "invalid server context";
 
-    error = adbc__json_get_str(req_root, "serial", true, &serial);
+    error = adbc__json_get_str(req_root, "serial", 
+            true, &serial);
     if(error != NULL)
         return error;
 
     if(serial[0] == '\0')
         return "field 'serial' must not be empty";
 
-    error = adbc__json_get_str(req_root, "key_path", false, &key_path);
+    error = adbc__json_get_str(req_root, "key_path", 
+            false, &key_path);
     if(error != NULL)
         return error;
 
@@ -225,17 +221,17 @@ static adbc__server_error_t adbc__cmd_connect(
 
     for(size_t i = 0U; i < ctx->devices.size; i++)
     {
-        adbc__device_t *candidate =
-            &((adbc__device_t *)ctx->devices.data)[i];
+        adb_conn_t **candidate =
+            &((adb_conn_t**)ctx->devices.data)[i];
 
-        if(candidate->reusable)
+        if(!*candidate)
         {
-            dev = candidate;
+            conn = candidate;
             break;
         }
     }
 
-    if(dev == NULL)
+    if(!conn)
     {
         if(!adbc_dynarr_push(&ctx->devices, NULL))
         {
@@ -243,23 +239,19 @@ static adbc__server_error_t adbc__cmd_connect(
             goto cleanup;
         }
 
-        dev = &((adbc__device_t *)ctx->devices.data)
+        conn = &((adb_conn_t**)ctx->devices.data)
             [ctx->devices.size - 1U];
-        memset(dev, 0, sizeof(*dev));
     }
 
-    dev->reusable = false;
-
-    if(adbc_util_parse_endpoint(serial, 
+    if(!adbc_util_parse_endpoint(serial, 
                 host, sizeof(host), &port))
-        res = adb_conn_create_wireless(&dev->conn, 
-                ctx->adb_ctx, host, port);
-    else
     {
-        ADBC_DEBUG("serial is not a network endpoint; "
-                "attempting USB connection");
-        res = adb_conn_create_wired(&dev->conn, ctx->adb_ctx, serial);
+        error = "serial is not a network endpoint";
+        goto cleanup;
     }
+
+    res = adb_conn_create_wireless(conn, 
+            ctx->adb_ctx, host, port);
 
     if(res != ADB_ERR_OK)
     {
@@ -267,7 +259,7 @@ static adbc__server_error_t adbc__cmd_connect(
         goto cleanup;
     }
 
-    res = adb_handshake(dev->conn, key);
+    res = adb_handshake(*conn, key);
     if(res != ADB_ERR_OK)
     {
         error = "ADB handshake failed";
@@ -278,17 +270,11 @@ cleanup:
     if(key != NULL)
         adb_key_destroy(key);
 
-    if(error != NULL && dev != NULL)
+    if(error && conn)
     {
-        if(dev->conn != NULL)
-        {
-            adb_conn_destroy(dev->conn);
-            dev->conn = NULL;
-        }
-
-        dev->reusable = true;
+        adb_conn_destroy(*conn);
+        *conn = NULL;
     }
-
     return error;
 }
 
@@ -404,17 +390,19 @@ respond:
             goto cleanup;
         }
     }
-    else if(!ctx->quit && 
-            !yyjson_mut_obj_add_str(response_doc, response_root, 
+    else if(!yyjson_mut_obj_add_str(response_doc, response_root, 
                 "result", "success"))
     {
         ADBC_ERROR("failed to construct JSON success response");
         goto cleanup;
     }
 
-    result = adbc_send_json(client_fd, response_doc);
-    if(!result)
-        ADBC_ERROR("failed to send command response");
+    if(!ctx->quit)
+    {
+        result = adbc_send_json(client_fd, response_doc);
+        if(!result)
+            ADBC_ERROR("failed to send command response");
+    }
 
 cleanup:
     if(req_doc != NULL)
@@ -433,6 +421,7 @@ void start_server_cmd(void *data)
     int fd = -1;
     int client_fd = -1;
     int option = 1;
+    adb_conn_t *conn = NULL;
 
     if(options == NULL)
     {
@@ -479,8 +468,7 @@ void start_server_cmd(void *data)
         goto cleanup;
     }
 
-    adbc_dynarr_init(&ctx.devices, sizeof(adbc__device_t));
-
+    adbc_dynarr_init(&ctx.devices, sizeof(adb_conn_t*));
     while(!ctx.quit)
     {
         client_fd = accept(fd, NULL, NULL);
@@ -510,16 +498,10 @@ cleanup:
     if(client_fd >= 0)
         (void)close(client_fd);
 
-    for(size_t i = 0U; i < ctx.devices.size; i++)
-    {
-        adbc__device_t *dev =
-            &((adbc__device_t *)ctx.devices.data)[i];
+    adbc_dynarr_foreach(&ctx.devices, adb_conn_t*, conn)
+        adb_conn_destroy(conn);
+    adbc_dynarr_destroy(&ctx.devices);
 
-        if(dev->conn != NULL)
-            adb_conn_destroy(dev->conn);
-    }
-
-    free(ctx.devices.data);
     if(ctx.adb_ctx != NULL)
         adb_ctx_destroy(ctx.adb_ctx);
     if(fd >= 0 && close(fd) != 0)

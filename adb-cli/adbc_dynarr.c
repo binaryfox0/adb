@@ -52,7 +52,7 @@ bool adbc_dynarr_push(
         adbc_dynarr_t *a, 
         const void *elem)
 {
-    if (!a || !elem)
+    if (!a)
         return false;
 
     if(a->size == a->capacity) 

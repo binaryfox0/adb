@@ -1,5 +1,8 @@
+#include <stdio.h>
+
 #include <aparse.h>
 
+#include "adbc_utils.h"
 #include "adbc_log.h"
 #include "adbc_client.h"
 #include "adbc_server.h"
@@ -9,6 +12,8 @@ int main(int argc, char **argv)
     const char *level_str = NULL;
     adbc_cmd_options_t options = {0};
     aparse_list dispatch = {0};
+    char path[4096] = {0};
+
     aparse_arg pair_args[] =
     {
         aparse_arg_string(
@@ -21,18 +26,30 @@ int main(int argc, char **argv)
                 "Pairing code for pairing"),
         aparse_arg_end_marker
     };
+    
+    aparse_arg connect_args[] =
+    {
+        aparse_arg_string(
+                "endpoint", 
+                NULL, 0, 
+                "Endpoint of the target device (host:port)"),
+        aparse_arg_end_marker
+    };
 
     aparse_arg commands[] =
     {
         aparse_arg_subparser(
-                "start-server", NULL, start_server_cmd, &options,
-                sizeof(options), "Ensure that there is a server running"),
+                "start-server", NULL, start_server_cmd, 
+                &options, sizeof(options), 
+                "Ensure that there is a server running"),
         aparse_arg_subparser(
                 "kill-server", NULL, kill_server_cmd, &options,
-                sizeof(options), "Kill the server if it is running"),
+                sizeof(options), 
+                "Kill the server if it is running"),
         aparse_arg_subparser(
-                "devices", NULL, devices_cmd, &options,
-                sizeof(options), "List connected devices"),
+                "devices", NULL, devices_cmd, 
+                &options, sizeof(options), 
+                "List connected devices"),
         aparse_arg_subparser("pair", pair_args, pair_cmd, 
                 &options, sizeof(options), 
                 "Pair with a device for secure TCP/IP communication",
@@ -40,6 +57,10 @@ int main(int argc, char **argv)
         aparse_arg_subparser("pair-qr", NULL, pair_qr_cmd, 
                 &options, sizeof(options), 
                 "Pair with a device for secure TCP/IP communication using QR code"),
+        aparse_arg_subparser("connect", connect_args, connect_cmd, 
+                &options, sizeof(options), 
+                "Connect to a device via TCP/IP", 
+                adbc_cmd_options_t, endpoint),
         aparse_arg_end_marker
     };
     aparse_arg main_args[] =
@@ -74,6 +95,13 @@ int main(int argc, char **argv)
     }
     else
         options.opt_lvl = ADB_LOG_ERROR;
+
+    if(!options.opt_key)
+    {
+        snprintf(path, sizeof(path), "%s/%s", 
+                adbc_util_home_dir(), ".android/adbkey");
+        options.opt_key = path;
+    }
 
     aparse_dispatch_all(&dispatch);
     return 0;

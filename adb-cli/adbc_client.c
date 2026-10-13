@@ -499,21 +499,11 @@ void connect_cmd(void *data)
             adbc_log_handle_server(response_root);
         else if(strcmp(type, "result") == 0)
         {
-            yyjson_val *error = yyjson_obj_get(response_root, "error");
-            yyjson_val *message = yyjson_obj_get(response_root, "message");
-
-            if(yyjson_is_bool(error) && yyjson_get_bool(error))
-            {
-                ADBC_ERROR("failed to connect to \"%s\"", options->serial);
-                if(yyjson_is_str(message))
-                    ADBC_INFO("reason: %s", yyjson_get_str(message));
-                else
-                    ADBC_INFO("reason: server rejected connect command");
-            }
-            else
-                ADBC_INFO("connected to \"%s\" successfully", options->serial);
-
             done = true;
+            if(adbc__check_result_error(response_root))
+                break;
+
+            ADBC_INFO("connected to \"%s\" successfully", options->serial);
         }
         else
             ADBC_ERROR("unhandled server packet type: %s", type);
