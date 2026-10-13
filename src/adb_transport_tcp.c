@@ -11,7 +11,6 @@
 #include <poll.h>
 
 #include "adb_alloc_priv.h"
-#include "adb_error_priv.h"
 #include "adb_log_priv.h"
 #include "adb_queue.h"
 #include "adb_utils.h"
@@ -24,6 +23,36 @@ typedef struct
     int fd;
     adb__queue_t queue;
 } adb__tcp_transport_t;
+
+ADB__INLINE adb_error_t adb__tcp_error_from_errno(
+        const int error)
+{
+    switch(error)
+    {
+        case ETIMEDOUT:
+            return ADB_ERR_TIMEOUT;
+
+        case ECONNRESET:
+        case ECONNABORTED:
+        case ENOTCONN:
+        case EPIPE:
+        case ENETDOWN:
+        case ENETUNREACH:
+        case ENETRESET:
+        case ECONNREFUSED:
+        case EHOSTDOWN:
+        case EHOSTUNREACH:
+            return ADB_ERR_DISCONNECTED;
+
+        case EBADF:
+        case EFAULT:
+        case EINVAL:
+            return ADB_ERR_IO;
+
+        default:
+            return ADB_ERR_NETWORK;
+    }
+}
 
 static adb_error_t adb__tcp_read(
         void *userdata,
@@ -45,7 +74,7 @@ static adb_error_t adb__tcp_read(
     {
         ret = recv(fd, data + offset, size - offset, 0);
         if(ret < 0)
-            return adb__error_from_errno(errno);
+            return adb__tcp_error_from_errno(errno);
         if(ret == 0)
             return ADB_ERR_DISCONNECTED;
 
@@ -151,7 +180,7 @@ static adb_error_t adb__tcp_write(
     {
         ret = send(fd, data + offset, size - offset, 0);
         if(ret < 0)
-            return adb__error_from_errno(errno);
+            return adb__tcp_error_from_errno(errno);
         if(ret == 0)
             return ADB_ERR_DISCONNECTED;
 
@@ -248,7 +277,7 @@ static adb_error_t adb__tcp_create_fd(
     {
         adb__log_err_errno("failed to create socket for %s", 
                 adb__sockaddr_endpoint_local(addr));
-        res = adb__error_from_errno(errno);
+        res = adb__tcp_error_from_errno(errno);
         goto fail;
     }
 
@@ -263,7 +292,7 @@ static adb_error_t adb__tcp_create_fd(
     {
         adb__log_err_errno("failed to connect to %s", 
                 adb__sockaddr_endpoint_local(addr));
-        res = adb__error_from_errno(errno);
+        res = adb__tcp_error_from_errno(errno);
         goto fail;
     }
 

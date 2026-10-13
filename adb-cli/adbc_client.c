@@ -113,6 +113,20 @@ static bool adbc__get_packet_type(
     return true;
 }
 
+static bool adbc__check_result_error(
+        yyjson_val *root)
+{
+    yyjson_val *result = yyjson_obj_get(root, "result");
+    if(!strcmp(yyjson_get_str(result), "error"))
+    {
+        yyjson_val *error = yyjson_obj_get(root, "error");
+        ADBC_ERROR("%s", yyjson_get_str(error));
+        return true;
+    }
+
+    return false;
+}
+
 static bool adbc__display_qr(const char *payload)
 {
     uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];

@@ -89,7 +89,7 @@ adb_error_t adb__sync_proto_write(
             if(!adb__packet_check_cmd(&sync->pkt, ADB__CMD_OKAY))
                 return ADB_ERR_PROTOCOL;
 
-            res = adb__proto_sync_handle_okay(sync);
+            res = adb__sync_proto_handle_okay(sync);
             if(res != ADB_ERR_OK)
                 return res;
 
@@ -105,7 +105,7 @@ adb_error_t adb__sync_proto_write(
 
             if(sync->pkt.command == ADB__CMD_OKAY)
             {
-                res = adb__proto_sync_handle_okay(sync);
+                res = adb__sync_proto_handle_okay(sync);
                 if(res != ADB_ERR_OK)
                     return res;
 
@@ -217,7 +217,7 @@ static adb_error_t adb__sync_read_timeout(
     return adb__sync_process_pkt(sync);
 }
 
-adb_error_t adb__proto_sync_handle_okay(
+adb_error_t adb__sync_proto_handle_okay(
         adb__sync_t *sync)
 {
     if(!sync || !sync->opened)
@@ -243,7 +243,7 @@ adb_error_t adb__proto_sync_handle_okay(
     return ADB_ERR_OK;
 }
 
-adb_error_t adb__proto_sync_ack(
+adb_error_t adb__sync_proto_ack(
         adb__sync_t *sync)
 {
     adb_error_t res;
@@ -295,7 +295,7 @@ adb_error_t adb__proto_sync_ack(
     return ADB_ERR_OK;
 }
 
-adb_error_t adb__proto_sync_check_ack(
+adb_error_t adb__sync_proto_check_ack(
         adb__sync_t *sync)
 {
     adb_error_t res = ADB_ERR_OK;
@@ -306,7 +306,7 @@ adb_error_t adb__proto_sync_check_ack(
     {
         if(!adb__packet_check_cmd(&sync->pkt, ADB__CMD_OKAY))
             return ADB_ERR_PROTOCOL;
-        res = adb__proto_sync_handle_okay(sync);
+        res = adb__sync_proto_handle_okay(sync);
     } else if(res == ADB_ERR_TIMEOUT) {
         /* block until ASB replensihed */
         while(sync->our_asb < 0)
@@ -316,7 +316,7 @@ adb_error_t adb__proto_sync_check_ack(
                 return res;
             if(!adb__packet_check_cmd(&sync->pkt, ADB__CMD_OKAY))
                 return ADB_ERR_PROTOCOL;
-            res = adb__proto_sync_handle_okay(sync);
+            res = adb__sync_proto_handle_okay(sync);
             if(res != ADB_ERR_OK)
                 return res;
         }

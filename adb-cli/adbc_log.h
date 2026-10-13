@@ -22,9 +22,22 @@
 #define ADBC_ERROR(...) aparse_prog_error(__VA_ARGS__)
 
 typedef struct yyjson_val yyjson_val;
+typedef struct yyjson_mut_val yyjson_mut_val;
 
-ADB__PRINTF(1, 2) void adbc_log_err_errno(ADB__PRINTF_FMT const char *fmt, ...);
-void adbc_log_debug_json(yyjson_val *item, const char *fmt, ...);
+ADB__PRINTF(1, 2) void adbc_log_err_errno(
+        ADB__PRINTF_FMT const char *fmt, 
+        ...);
+
+ADB__PRINTF(2, 3) void adbc_log_debug_json_immut(
+        yyjson_val *item, 
+        ADB__PRINTF_FMT const char *fmt, 
+        ...);
+
+ADB__PRINTF(2, 3) void adbc_log_debug_json_mut(
+        yyjson_mut_val *item, 
+        ADB__PRINTF_FMT const char *fmt, 
+        ...);
+
 void adbc_log_server_callback(
         void *userdata, 
         adb_log_level_t level,

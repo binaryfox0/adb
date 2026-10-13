@@ -37,60 +37,278 @@ void adbc_log_err_errno(const char *fmt, ...)
     ADBC_INFO("reason: %s", strerror(saved_errno));
 }
 
-static void adbc_log_debug_json_impl(yyjson_val *item, const int depth)
+static void adbc__log_debug_json_immut_impl(
+        yyjson_val *item,
+        const int depth,
+        const char *key,
+        const int has_next)
 {
-    size_t idx = 0U;
-    size_t max = 0U;
-    yyjson_val *key = NULL;
-    yyjson_val *value = NULL;
-
-    if(item == NULL || depth < 0 || depth > 64)
-    {
-        ADBC_DEBUG("%*snull", depth >= 0 ? depth * 4 : 0, "");
-        return;
-    }
-
-    switch(yyjson_get_type(item))
+    switch (yyjson_get_type(item))
     {
         case YYJSON_TYPE_OBJ:
-            ADBC_DEBUG("%*s{", depth * 4, "");
-            yyjson_obj_foreach(item, idx, max, key, value)
+        {
+            const size_t count = yyjson_obj_size(item);
+            yyjson_obj_iter iter = yyjson_obj_iter_with(item);
+            yyjson_val *obj_key;
+
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "{%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    count ? "" : "}"
+            );
+
+            size_t i = 0;
+            while ((obj_key = yyjson_obj_iter_next(&iter)))
             {
-                ADBC_DEBUG("%*s\"%s\": ", (depth + 1) * 4, "",
-                        yyjson_get_str(key) != NULL ? yyjson_get_str(key) : "");
-                adbc_log_debug_json_impl(value, depth + 1);
+                yyjson_val *child = yyjson_obj_iter_get_val(obj_key);
+
+                adbc__log_debug_json_immut_impl(
+                        child,
+                        depth + 1,
+                        yyjson_get_str(obj_key),
+                        ++i < count
+                );
             }
-            ADBC_DEBUG("%*s}", depth * 4, "");
+
+            if (count)
+            {
+                ADBC_DEBUG("%*s}%s", depth * 4, "",
+                        has_next ? "," : "");
+            }
             break;
+        }
 
         case YYJSON_TYPE_ARR:
-            ADBC_DEBUG("%*s[", depth * 4, "");
-            yyjson_arr_foreach(item, idx, max, value)
-                adbc_log_debug_json_impl(value, depth + 1);
-            ADBC_DEBUG("%*s]", depth * 4, "");
+        {
+            const size_t count = yyjson_arr_size(item);
+            yyjson_arr_iter iter = yyjson_arr_iter_with(item);
+            yyjson_val *child;
+
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "[%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    count ? "" : "]"
+            );
+
+            size_t i = 0;
+            while ((child = yyjson_arr_iter_next(&iter)))
+            {
+                adbc__log_debug_json_immut_impl(
+                        child,
+                        depth + 1,
+                        NULL,
+                        ++i < count
+                );
+            }
+
+            if (count)
+            {
+                ADBC_DEBUG("%*s]%s", depth * 4, "",
+                        has_next ? "," : "");
+            }
             break;
+        }
 
         case YYJSON_TYPE_STR:
-            ADBC_DEBUG("\"%s\"", yyjson_get_str(item) != NULL ? 
-                    yyjson_get_str(item) : "");
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "\"%s\"%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    yyjson_get_str(item),
+                    has_next ? "," : "");
             break;
 
         case YYJSON_TYPE_NUM:
-            ADBC_DEBUG("%.17g", yyjson_get_num(item));
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "%.17g%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    yyjson_get_num(item),
+                    has_next ? "," : "");
             break;
 
         case YYJSON_TYPE_BOOL:
-            ADBC_DEBUG("%s", yyjson_get_bool(item) ? "true" : "false");
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "%s%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    yyjson_get_bool(item) ? "true" : "false",
+                    has_next ? "," : "");
             break;
 
         case YYJSON_TYPE_NULL:
         default:
-            ADBC_DEBUG("null");
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "null%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    has_next ? "," : "");
             break;
     }
 }
 
-void adbc_log_debug_json(yyjson_val *item, const char *fmt, ...)
+static void adbc__log_debug_json_mut_impl(
+        yyjson_mut_val *item,
+        const int depth,
+        const char *key,
+        const int has_next)
+{
+    switch (yyjson_mut_get_type(item))
+    {
+        case YYJSON_TYPE_OBJ:
+        {
+            const size_t count = yyjson_mut_obj_size(item);
+            yyjson_mut_obj_iter iter = yyjson_mut_obj_iter_with(item);
+            yyjson_mut_val *obj_key;
+
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "{%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    count ? "" : "}"
+            );
+
+            size_t i = 0;
+            while ((obj_key = yyjson_mut_obj_iter_next(&iter)))
+            {
+                yyjson_mut_val *child = yyjson_mut_obj_iter_get_val(obj_key);
+                adbc__log_debug_json_mut_impl(
+                        child,
+                        depth + 1,
+                        yyjson_mut_get_str(obj_key),
+                        ++i < count
+                );
+            }
+
+            if (count)
+            {
+                ADBC_DEBUG("%*s}%s", depth * 4, "",
+                        has_next ? "," : "");
+            }
+            break;
+        }
+
+        case YYJSON_TYPE_ARR:
+        {
+            const size_t count = yyjson_mut_arr_size(item);
+            yyjson_mut_arr_iter iter = yyjson_mut_arr_iter_with(item);
+            yyjson_mut_val *child;
+
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "[%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    count ? "" : "]"
+            );
+
+            size_t i = 0;
+            while ((child = yyjson_mut_arr_iter_next(&iter)))
+            {
+                adbc__log_debug_json_mut_impl(
+                        child,
+                        depth + 1,
+                        NULL,
+                        ++i < count
+                );
+            }
+
+            if (count)
+            {
+                ADBC_DEBUG("%*s]%s", depth * 4, "",
+                        has_next ? "," : "");
+            }
+            break;
+        }
+
+        case YYJSON_TYPE_STR:
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "\"%s\"%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    yyjson_mut_get_str(item),
+                    has_next ? "," : "");
+            break;
+
+        case YYJSON_TYPE_NUM:
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "%.17g%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    yyjson_mut_get_num(item),
+                    has_next ? "," : "");
+            break;
+
+        case YYJSON_TYPE_BOOL:
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "%s%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    yyjson_mut_get_bool(item) ? "true" : "false",
+                    has_next ? "," : "");
+            break;
+
+        case YYJSON_TYPE_NULL:
+        default:
+            ADBC_DEBUG(
+                    "%*s"
+                    "%s%s%s"
+                    "null%s",
+                    depth * 4, "",
+                    key ? "\"" : "",
+                    key ? key : "",
+                    key ? "\": " : "",
+                    has_next ? "," : "");
+            break;
+    }
+}
+
+void adbc_log_debug_json_immut(yyjson_val *item, const char *fmt, ...)
 {
     char buffer[ADBC_LOG_BUFFER_SIZE] = {0};
     va_list va;
@@ -103,9 +321,24 @@ void adbc_log_debug_json(yyjson_val *item, const char *fmt, ...)
     va_end(va);
 
     ADBC_DEBUG("%s", buffer);
-    adbc_log_debug_json_impl(item, 0);
+    adbc__log_debug_json_immut_impl(item, 0, NULL, 0);
 }
 
+void adbc_log_debug_json_mut(yyjson_mut_val *item, const char *fmt, ...)
+{
+    char buffer[ADBC_LOG_BUFFER_SIZE] = {0};
+    va_list va;
+
+    if(fmt == NULL)
+        return;
+
+    va_start(va, fmt);
+    (void)vsnprintf(buffer, sizeof(buffer), fmt, va);
+    va_end(va);
+
+    ADBC_DEBUG("%s", buffer);
+    adbc__log_debug_json_mut_impl(item, 0, NULL, 0);
+}
 bool adbc_log_level_parse(const char *level_str, adb_log_level_t *out_level)
 {
     if(out_level != NULL)

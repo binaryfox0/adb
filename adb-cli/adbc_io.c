@@ -25,9 +25,9 @@ static bool adbc__recv_all(
         const size_t size)
 {
     uint8_t *bytes = data;
-    size_t offset = 0U;
+    size_t offset = 0;
 
-    if(fd < 0 || (size > 0U && data == NULL))
+    if(fd < 0 || (size > 0 && !data))
         return false;
 
     while(offset < size)
@@ -59,8 +59,8 @@ bool adbc_recv_json(
         const int fd, 
         yyjson_doc **out_doc)
 {
-    uint16_t length_be = 0U;
-    size_t length = 0U;
+    uint16_t length_be = 0;
+    size_t length = 0;
     char *json = NULL;
     yyjson_read_err read_err = {0};
     yyjson_doc *doc = NULL;
@@ -68,21 +68,21 @@ bool adbc_recv_json(
     if(out_doc != NULL)
         *out_doc = NULL;
 
-    if(fd < 0 || out_doc == NULL)
+    if(fd < 0 || !out_doc)
         return false;
 
     if(!adbc__recv_all(fd, &length_be, sizeof(length_be)))
         return false;
 
     length = (size_t)ntohs(length_be);
-    if(length == 0U || length > ADBC__MAX_JSON_SIZE)
+    if(length == 0 || length > ADBC__MAX_JSON_SIZE)
     {
         ADBC_ERROR("invalid JSON frame length: %zu", length);
         return false;
     }
 
     json = malloc(length + 1U);
-    if(json == NULL)
+    if(!json)
     {
         ADBC_ERROR("failed to allocate JSON receive buffer");
         return false;
@@ -96,16 +96,17 @@ bool adbc_recv_json(
 
     json[length] = '\0';
     doc = yyjson_read_opts(json, length, 0, NULL, &read_err);
-    if(doc == NULL)
+    if(!doc)
     {
         ADBC_ERROR("failed to parse JSON payload");
         ADBC_INFO("reason: %s, at %zu byte",
-                read_err.msg != NULL ? read_err.msg : "unknown ADBC_ERROR",
+                read_err.msg != NULL ? read_err.msg : "unknown error",
                 read_err.pos);
         free(json);
         return false;
     }
 
+    adbc_log_debug_json_immut(yyjson_doc_get_root(doc), "read payload");
     *out_doc = doc;
     free(json);
     return true;
@@ -114,9 +115,9 @@ bool adbc_recv_json(
 static bool adbc__send_all(const int fd, const void *data, const size_t size)
 {
     const uint8_t *bytes = data;
-    size_t offset = 0U;
+    size_t offset = 0;
 
-    if(fd < 0 || (size > 0U && data == NULL))
+    if(fd < 0 || (size > 0 && !data))
         return false;
 
     while(offset < size)
@@ -146,10 +147,10 @@ static bool adbc__send_all(const int fd, const void *data, const size_t size)
 
 bool adbc_send_json_raw(const int fd, const char *json)
 {
-    uint16_t length_be = 0U;
-    size_t json_len = 0U;
+    uint16_t length_be = 0;
+    size_t json_len = 0;
 
-    if(fd < 0 || json == NULL)
+    if(fd < 0 || !json)
     {
         ADBC_ERROR("invalid JSON send arguments");
         return false;
@@ -158,7 +159,7 @@ bool adbc_send_json_raw(const int fd, const char *json)
     while(json_len <= ADBC__MAX_JSON_SIZE && json[json_len] != '\0')
         json_len++;
 
-    if(json_len == 0U || json_len > ADBC__MAX_JSON_SIZE)
+    if(json_len == 0 || json_len > ADBC__MAX_JSON_SIZE)
     {
         ADBC_ERROR("invalid JSON payload size: %zu", json_len);
         return false;
@@ -173,19 +174,20 @@ bool adbc_send_json(const int fd, yyjson_mut_doc *doc)
 {
     bool result = false;
     char *json = NULL;
-    size_t json_len = 0U;
+    size_t json_len = 0;
 
-    if(fd < 0 || doc == NULL)
+    if(fd < 0 || !doc)
         return false;
 
+    adbc_log_debug_json_mut(yyjson_mut_doc_get_root(doc), "write payload");
     json = yyjson_mut_write(doc, 0, &json_len);
-    if(json == NULL)
+    if(!json)
     {
         ADBC_ERROR("failed to serialize JSON node");
         return false;
     }
 
-    if(json_len == 0U || json_len > ADBC__MAX_JSON_SIZE)
+    if(json_len == 0 || json_len > ADBC__MAX_JSON_SIZE)
     {
         ADBC_ERROR("serialized JSON payload size is invalid: %zu", json_len);
         goto cleanup;

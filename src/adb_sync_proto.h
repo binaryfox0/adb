@@ -39,13 +39,13 @@ ADB__NODISCARD adb_error_t adb__sync_proto_write(
 ADB__NODISCARD adb_error_t adb__sync_proto_read(
         adb__sync_t *sync);
 
-adb_error_t adb__proto_sync_handle_okay(
+adb_error_t adb__sync_proto_handle_okay(
         adb__sync_t *sync);
 
-ADB__NODISCARD adb_error_t adb__proto_sync_ack(
+ADB__NODISCARD adb_error_t adb__sync_proto_ack(
         adb__sync_t *sync);
 
-ADB__NODISCARD adb_error_t adb__proto_sync_check_ack(
+ADB__NODISCARD adb_error_t adb__sync_proto_check_ack(
         adb__sync_t *sync);
 
 void adb__sync_proto_close(

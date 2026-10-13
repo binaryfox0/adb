@@ -336,7 +336,8 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
     }
 
     yyjson_mut_doc_set_root(response_doc, response_root);
-    if(!yyjson_mut_obj_add_str(response_doc, response_root, "type", "result"))
+    if(!yyjson_mut_obj_add_str(response_doc, response_root, 
+                "type", "result"))
     {
         ADBC_ERROR("failed to initialize JSON response");
         goto cleanup;
@@ -356,7 +357,8 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
         goto respond;
     }
 
-    error = adbc__json_get_str(req_root, "type", true, &type);
+    error = adbc__json_get_str(req_root, "type", 
+            true, &type);
     if(error != NULL)
         goto respond;
 
@@ -367,7 +369,8 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
         goto respond;
     }
 
-    error = adbc__json_get_str(req_root, "cmd", true, &cmd);
+    error = adbc__json_get_str(req_root, "cmd", 
+            true, &cmd);
     if(error != NULL)
         goto respond;
 
@@ -401,7 +404,8 @@ respond:
             goto cleanup;
         }
     }
-    else if(!yyjson_mut_obj_add_str(response_doc, response_root, 
+    else if(!ctx->quit && 
+            !yyjson_mut_obj_add_str(response_doc, response_root, 
                 "result", "success"))
     {
         ADBC_ERROR("failed to construct JSON success response");
