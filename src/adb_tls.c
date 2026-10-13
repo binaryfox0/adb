@@ -4,7 +4,6 @@
 
 #include <mbedtls/ssl.h>
 
-#include "adb_error_priv.h"
 #include "adb_log_priv.h"
 #include "adb_transport.h"
 #include "adb_ctx_priv.h"

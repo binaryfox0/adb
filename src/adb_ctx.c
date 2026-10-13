@@ -15,6 +15,7 @@ adb_error_t adb_ctx_create(
     if(!ctx)
         return ADB_ERR_PARAM;
 
+    ADB__INFO("creating new library context");
     tmp = adb__calloc(1, sizeof(*tmp));
     if(!tmp)
         return ADB_ERR_NO_MEM;
@@ -55,22 +56,44 @@ adb_error_t adb_ctx_create(
         return ADB_ERR_UNSUPPORTED; // should be GENERIC?
     }
     
+    adb__dynarr_init(&tmp->wired_infos, 
+            sizeof(adb_wired_info_t*));
+    adb__dynarr_init(&tmp->wireless_infos, 
+            sizeof(adb_wireless_info_t*));
+    adb__dynarr_init(&tmp->dev_winfos, 
+            sizeof(adb_wireless_info_t*));
+    adb__dynarr_init(&tmp->pair_winfos, 
+            sizeof(adb_wireless_info_t*));
     *ctx = tmp;
+    ADB__INFO("created library context successfully");
     return ADB_ERR_OK;
 }
 
 void adb_ctx_destroy(
         adb_ctx_t *ctx)
 {
+    adb_wired_info_t *wired_info = NULL;
+    adb_wireless_info_t *wireless_info = NULL;
     if(!ctx)
         return;
     
     mbedtls_entropy_free(&ctx->entropy);
     mbedtls_ctr_drbg_free(&ctx->drbg);
 
-    for(size_t i = 0; i < ctx->infos_capacity; i++)
-        adb__wired_info_destroy(ctx->wired_infos[i]);
-    adb__free(ctx->wired_infos);
+    adb__dynarr_foreach(&ctx->wired_infos, adb_wired_info_t*, wired_info)
+        adb__wired_info_destroy(wired_info);
+    adb__dynarr_foreach(&ctx->wireless_infos, adb_wireless_info_t*, wireless_info)
+        adb__wireless_info_destroy(wireless_info);
+    adb__dynarr_foreach(&ctx->dev_winfos, adb_wireless_info_t*, wireless_info)
+        adb__wireless_info_destroy(wireless_info);
+    adb__dynarr_foreach(&ctx->pair_winfos, adb_wireless_info_t*, wireless_info)
+        adb__wireless_info_destroy(wireless_info);
+
+    adb__dynarr_destroy(&ctx->wired_infos);
+    adb__dynarr_destroy(&ctx->wireless_infos);
+    adb__dynarr_destroy(&ctx->dev_winfos);
+    adb__dynarr_destroy(&ctx->pair_winfos);
+
     if((ctx->features & ADB__FEATURE_WIRED) != 0)
         libusb_exit(ctx->usb);
     adb__free(ctx);

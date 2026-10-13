@@ -11,7 +11,6 @@
 #include <poll.h>
 
 #include "adb_alloc_priv.h"
-#include "adb_error_priv.h"
 #include "adb_log_priv.h"
 #include "adb_queue.h"
 #include "adb_utils.h"
@@ -24,6 +23,36 @@ typedef struct
     int fd;
     adb__queue_t queue;
 } adb__tcp_transport_t;
+
+ADB__INLINE adb_error_t adb__tcp_error_from_errno(
+        const int error)
+{
+    switch(error)
+    {
+        case ETIMEDOUT:
+            return ADB_ERR_TIMEOUT;
+
+        case ECONNRESET:
+        case ECONNABORTED:
+        case ENOTCONN:
+        case EPIPE:
+        case ENETDOWN:
+        case ENETUNREACH:
+        case ENETRESET:
+        case ECONNREFUSED:
+        case EHOSTDOWN:
+        case EHOSTUNREACH:
+            return ADB_ERR_DISCONNECTED;
+
+        case EBADF:
+        case EFAULT:
+        case EINVAL:
+            return ADB_ERR_IO;
+
+        default:
+            return ADB_ERR_NETWORK;
+    }
+}
 
 static adb_error_t adb__tcp_read(
         void *userdata,
@@ -45,7 +74,7 @@ static adb_error_t adb__tcp_read(
     {
         ret = recv(fd, data + offset, size - offset, 0);
         if(ret < 0)
-            return adb__error_from_errno(errno);
+            return adb__tcp_error_from_errno(errno);
         if(ret == 0)
             return ADB_ERR_DISCONNECTED;
 
@@ -151,7 +180,7 @@ static adb_error_t adb__tcp_write(
     {
         ret = send(fd, data + offset, size - offset, 0);
         if(ret < 0)
-            return adb__error_from_errno(errno);
+            return adb__tcp_error_from_errno(errno);
         if(ret == 0)
             return ADB_ERR_DISCONNECTED;
 
@@ -185,40 +214,6 @@ static socklen_t adb__addrlen_from_addr(
         case AF_INET6: return sizeof(struct sockaddr_in6);
         default: return 0;
     }
-}
-
-static const char *adb__addr_to_string(
-        const struct sockaddr *addr)
-{
-    static _Thread_local char buffer[INET6_ADDRSTRLEN + 8];
-    char host[INET6_ADDRSTRLEN] = {0};
-    uint16_t port = 0;
-    if(!addr)
-        return NULL;
-
-    if(adb__sockaddr_get_host(addr, 
-                host, sizeof(host)) != ADB_ERR_OK)
-        return NULL;
-    port = adb__sockaddr_get_port(addr);
-    switch(addr->sa_family)
-    {
-        case AF_INET:
-            if(snprintf(buffer, sizeof(buffer), 
-                        "%s:%u", host, port) < 0)
-                return NULL;
-            break;
-
-        case AF_INET6:
-            if(snprintf(buffer, sizeof(buffer), 
-                        "[%s]:%u", host, port) < 0)
-                return NULL;
-            break;
-
-        default:
-            return NULL;
-    }
-
-    return buffer;
 }
 
 static bool adb__tcp_set_sockopts(
@@ -271,7 +266,7 @@ static adb_error_t adb__tcp_create_fd(
     }
 
     ADB__INFO("creating connection for wireless device %s",
-            adb__addr_to_string(addr));
+            adb__sockaddr_endpoint_local(addr));
 
     sock = socket(
             addr->sa_family,
@@ -281,8 +276,8 @@ static adb_error_t adb__tcp_create_fd(
     if(sock < 0)
     {
         adb__log_err_errno("failed to create socket for %s", 
-                adb__addr_to_string(addr));
-        res = adb__error_from_errno(errno);
+                adb__sockaddr_endpoint_local(addr));
+        res = adb__tcp_error_from_errno(errno);
         goto fail;
     }
 
@@ -296,8 +291,8 @@ static adb_error_t adb__tcp_create_fd(
     if(err < 0)
     {
         adb__log_err_errno("failed to connect to %s", 
-                adb__addr_to_string(addr));
-        res = adb__error_from_errno(errno);
+                adb__sockaddr_endpoint_local(addr));
+        res = adb__tcp_error_from_errno(errno);
         goto fail;
     }
 
@@ -327,6 +322,9 @@ adb_error_t adb__tcp_transport_create(
     adb__tcp_transport_t *tcp = NULL;
     if(!transport || !addr)
         return ADB_ERR_PARAM;
+    
+    ADB__INFO("creating connection for wireless device %s",
+            adb__sockaddr_endpoint_local(addr));
 
     tcp = adb__calloc(1, sizeof(*tcp));
     if(!tcp)
@@ -343,7 +341,7 @@ adb_error_t adb__tcp_transport_create(
     transport->destroy = adb__tcp_destroy;
 
     ADB__INFO("created connection successfully for wireless device %s",
-            adb__addr_to_string(addr));
+            adb__sockaddr_endpoint_local(addr));
 
     return ADB_ERR_OK;
 

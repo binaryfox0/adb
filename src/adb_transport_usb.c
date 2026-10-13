@@ -5,7 +5,6 @@
 
 #include "adb_alloc_priv.h"
 #include "adb_log_priv.h"
-#include "adb_error_priv.h"
 #include "adb_query_priv.h"
 
 typedef struct
@@ -17,6 +16,30 @@ typedef struct
 
     uint8_t interface_number;
 } adb__usb_transport_t;
+
+ADB__INLINE adb_error_t adb__usb_error_from_libusb(
+        const int error)
+{
+    switch(error)
+    {
+        case LIBUSB_SUCCESS:
+            return ADB_ERR_OK;
+
+        case LIBUSB_ERROR_TIMEOUT:
+            return ADB_ERR_TIMEOUT;
+
+        case LIBUSB_ERROR_NO_DEVICE:
+            return ADB_ERR_DISCONNECTED;
+
+        case LIBUSB_ERROR_PIPE:
+        case LIBUSB_ERROR_OVERFLOW:
+        case LIBUSB_ERROR_IO:
+            return ADB_ERR_USB;
+
+        default:
+            return ADB_ERR_USB;
+    }
+}
 
 static adb_error_t adb__usb_read(
         void *userdata,
@@ -41,7 +64,7 @@ static adb_error_t adb__usb_read(
             0);
 
     if(ret != LIBUSB_SUCCESS)
-        return adb__error_from_libusb(ret);
+        return adb__usb_error_from_libusb(ret);
 
     if(transferred != (int)size)
         return ADB_ERR_IO;
@@ -73,7 +96,7 @@ static adb_error_t adb__usb_read_timeout(
             timeout_ms);
 
     if(ret != LIBUSB_SUCCESS)
-        return adb__error_from_libusb(ret);
+        return adb__usb_error_from_libusb(ret);
 
     if(transferred != (int)size)
         return ADB_ERR_IO;
@@ -106,7 +129,7 @@ static adb_error_t adb__usb_write(
             0);
 
     if(ret != LIBUSB_SUCCESS)
-        return adb__error_from_libusb(ret);
+        return adb__usb_error_from_libusb(ret);
 
     if(transferred != (int)size)
         return ADB_ERR_IO;
@@ -156,7 +179,7 @@ adb_error_t adb__usb_transport_create(
     if(ret != LIBUSB_SUCCESS)
     {
         adb__free(usb);
-        return adb__error_from_libusb(ret);
+        return adb__usb_error_from_libusb(ret);
     }
 
     ret = libusb_claim_interface(
@@ -167,7 +190,7 @@ adb_error_t adb__usb_transport_create(
     {
         libusb_close(handle);
         adb__free(usb);
-        return adb__error_from_libusb(ret);
+        return adb__usb_error_from_libusb(ret);
     }
 
     usb->handle = handle;

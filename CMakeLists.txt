@@ -1,8 +1,12 @@
 cmake_minimum_required(VERSION 3.15)
 project(adb)
 
-option(ADB_BUILD_WITH_ASAN "Build adb with AddressSanitizer" OFF)
-option(ADB_BUILD_CLI "Build the adb cli tool" OFF)
+option(ADB_BUILD_WITH_ASAN "Build libadb with AddressSanitizer" OFF)
+option(ADB_NO_LZ4 "Build libadb without LZ4 compression support" OFF)
+option(ADB_NO_ZSTD "Build libadb without Zstandard compression support" OFF)
+option(ADB_NO_BROTLI "Build libadb without LZ4 compression support" OFF)
+option(ADB_NO_USB "Build libadb without USB support" OFF)
+option(ADB_BUILD_CLI "Build libadb command line tool" OFF)
 
 function(target_add_strict_flags target)
     if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -128,8 +132,12 @@ add_library(adb
     src/adb_alloc.c
     src/adb_error.c
     src/adb_log.c
+    src/adb_dynarr.c
     src/adb_ctx.c
     src/adb_lookup.c
+    src/adb_query_wired.c
+    src/adb_query_mdns.c
+    src/adb_query_wireless.c
     src/adb_query.c
     src/adb_queue.c
     src/adb_transport_usb.c
@@ -142,16 +150,25 @@ add_library(adb
     src/adb_packet.c
     src/adb_sock.c
     src/adb_pair.c
-    src/adb_sync.c
+    src/adb_sync_proto.c
     src/adb_decomp.c
     src/adb_comp.c
-    src/adb_conn.c)
+    src/adb_conn.c
+    src/adb_sync_proto.c
+    src/adb_sync.c)
+
 target_compile_definitions(adb PRIVATE
     ZSTD_STATIC_LINKING_ONLY
-    LZ4F_STATIC_LINKING_ONLY)
+    LZ4F_STATIC_LINKING_ONLY
+    $<$<BOOL:${ADB_NO_LZ4}>:ADB_NO_LZ4>
+    $<$<BOOL:${ADB_NO_ZSTD}>:ADB_NO_ZSTD>
+    $<$<BOOL:${ADB_NO_BROTLI}>:ADB_NO_BROTLI>
+    $<$<BOOL:${ADB_NO_USB}>:ADB_NO_USB>)
+
+
 target_include_directories(adb PUBLIC include/)
 target_link_libraries(adb PRIVATE 
-    PkgConfig::libusb
+    $<$<NOT:$<BOOL:${ADB_NO_USB}>>:PkgConfig::libusb>
     MbedTLS::mbedtls
     MbedTLS::mbedx509
     MbedTLS::mbedcrypto
@@ -166,12 +183,21 @@ target_add_asan(adb)
 
 if(ADB_BUILD_CLI)
     add_subdirectory(deps/qrcodegen)
+    add_subdirectory(deps/yyjson)
     if(NOT TARGET aparse)
         add_subdirectory(deps/aparse)
     endif()
 
-    add_executable(adb-cli adb-cli/main.c)
-    target_link_libraries(adb-cli PRIVATE aparse adb qrcodegen)
+    add_executable(adb-cli 
+        adb-cli/adbc_utils.c
+        adb-cli/adbc_dynarr.c
+        adb-cli/adbc_client.c
+        adb-cli/adbc_server.c
+        adb-cli/adbc_log.c
+        adb-cli/adbc_io.c
+        adb-cli/main.c
+    )
+    target_link_libraries(adb-cli PRIVATE aparse adb qrcodegen yyjson)
     target_add_strict_flags(adb-cli)
     target_add_asan(adb-cli)
 endif()

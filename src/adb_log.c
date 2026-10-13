@@ -7,6 +7,7 @@
 #include <errno.h>
 
 #include <mbedtls/error.h>
+#include <libusb.h>
 
 #include "adb_utils.h"
 
@@ -16,15 +17,15 @@ static adb_log_fn adb__log_callback = NULL;
 static void *adb__log_userdata = NULL;
 static adb_log_level_t adb__log_level = ADB_LOG_ERROR;
 
-adb_error_t adb_set_log_callback(
-        const adb_log_fn callback,
+adb_error_t adb_log_set(
+        const adb_log_fn func,
         void *userdata,
         const adb_log_level_t level)
 {
-    if(level < 0 || level >= ADB__LOG_COUNT)
+    if(!ADB__CHECK_ENUM(level, LOG))
         return ADB_ERR_PARAM;
 
-    if(!callback)
+    if(!func)
     {
         adb__log_callback = NULL;
         adb__log_userdata = NULL;
@@ -32,8 +33,36 @@ adb_error_t adb_set_log_callback(
         return ADB_ERR_OK;
     }
 
-    adb__log_callback = callback;
+    adb__log_callback = func;
     adb__log_userdata = userdata;
+    adb__log_level = level;
+    return ADB_ERR_OK;
+}
+
+void adb_log_set_func(
+        const adb_log_fn func)
+{
+    if(!func)
+    {
+        adb__log_callback = NULL;
+        adb__log_userdata = NULL;
+        adb__log_level = ADB_LOG_ERROR;
+    }
+
+    adb__log_callback = func;
+}
+
+void adb_log_set_userdata(
+        void *userdata) {
+    adb__log_userdata = userdata;
+}
+
+adb_error_t adb_log_set_level(
+        const adb_log_level_t level)
+{
+    if(!ADB__CHECK_ENUM(level, LOG))
+        return ADB_ERR_PARAM;
+
     adb__log_level = level;
     return ADB_ERR_OK;
 }
@@ -66,14 +95,27 @@ void adb__log(
     va_end(va);
 }
 
+void adb__log_err_libusb(
+        const int err,
+        const char *fmt,
+        ...)
+{
+    va_list va;
+    va_start(va, fmt);
+    adb__log_variadic(ADB_LOG_ERROR, fmt, va);
+    va_end(va);
+    ADB__DEBUG("reason: %s (%s)", 
+            libusb_error_name(err), 
+            libusb_strerror(err));
+}
+
 void adb__log_err_mbedtls(
         const int err,
         const char *fmt,
         ...)
 {
     va_list va;
-    char buf[256] = {0};
-
+    char buf[ADB__LOG_BUFFER_SIZE] = {0};
     va_start(va, fmt);
     adb__log_variadic(ADB_LOG_ERROR, fmt, va);
     va_end(va);
@@ -86,7 +128,6 @@ void adb__log_err_errno(
         ...)
 {
     va_list va;
-
     va_start(va, fmt);
     adb__log_variadic(ADB_LOG_ERROR, fmt, va);
     va_end(va);
@@ -99,7 +140,6 @@ void adb__log_err_adb(
         ...)
 {
     va_list va;
-
     va_start(va, fmt);
     adb__log_variadic(ADB_LOG_ERROR, fmt, va);
     va_end(va);
@@ -107,7 +147,6 @@ void adb__log_err_adb(
 }
 
 #define ADB__HEX_BYTES_PER_LINE 16
-
 
 void adb__log_multiline_text(
         const char *text,
@@ -225,7 +264,6 @@ void adb__log_payload(
         }
 
         buffer[pos] = '\0';
-
         adb__log_callback(
                 adb__log_userdata, 
                 ADB_LOG_DEBUG, 

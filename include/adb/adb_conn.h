@@ -36,6 +36,11 @@ typedef enum
     ADB__CONN_PROFILE_COUNT
 } adb_conn_profile_t;
 
+adb_error_t adb_conn_create_wired(
+        adb_conn_t **conn,
+        adb_ctx_t *ctx,
+        const char *serial);
+
 adb_error_t adb_conn_create_wired_from_info(
         adb_conn_t **conn,
         adb_ctx_t *ctx,
@@ -64,31 +69,6 @@ adb_error_t adb_conn_create_custom(
 adb_error_t adb_handshake(
         adb_conn_t *conn,
         adb_key_t *key);
-
-adb_error_t adb_pull(
-        adb_conn_t *conn,
-        const char *remote_path,
-        const adb_write_fn write_fn,
-        void *userdata);
-
-adb_error_t adb_pull_file(
-        adb_conn_t *conn,
-        const char *remote_path,
-        const char *local_path);
-
-adb_error_t adb_push(
-        adb_conn_t *conn,
-        const char *remote_path,
-        const uint32_t mode,
-        const uint32_t modified_time,
-        const size_t size,
-        const adb_read_fn read_fn,
-        void *userdata);
-
-adb_error_t adb_push_file(
-        adb_conn_t *conn,
-        const char *local_path,
-        const char *remote_path);
 
 void adb_conn_destroy(
         adb_conn_t *conn);
