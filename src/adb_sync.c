@@ -832,112 +832,66 @@ ADB__INLINE int adb__sync_error_to_errno(
         default: return EIO;
     }
 }
-static adb_error_t adb_sync_stat_v2(
-        adb_conn_t *conn,
-        const char *remote_path,
-        adb_sync_stat_t *out,
-        int *out_errno)
+
+static adb_error_t adb__sync_read_fixed_response(
+        adb__sync_t *sync,
+        void *out,
+        const size_t out_size)
 {
     adb_error_t res = ADB_ERR_OK;
-    adb__sync_t sync = {0};
-    bool data_done = false;
     size_t written = 0U;
-    adb_sync_stat_t tmp = {0};
 
-    if(!conn || !remote_path || !out)
+    if(!sync || !out)
         return ADB_ERR_PARAM;
 
-    ADB__INFO("getting file information from device at \"%s\"", remote_path);
-    res = adb__sync_proto_open(&sync, conn);
-    if(res != ADB_ERR_OK)
-        return res;
-
-    res = adb__send_request(&sync, ADB__SYNC_ID_STAT_V2, remote_path);
-    if(res != ADB_ERR_OK)
-        goto cleanup;
-
-    while(!data_done)
+    while(written < out_size)
     {
         uint8_t *pkt_payload = NULL;
         size_t payload_size = 0U;
         size_t pkt_offset = 0U;
 
-        res = adb__sync_proto_read(&sync);
+        res = adb__sync_proto_read(sync);
         if(res != ADB_ERR_OK)
-            goto cleanup;
+            return res;
 
-        if(sync.pkt.command == ADB__CMD_OKAY)
+        if(sync->pkt.command == ADB__CMD_OKAY)
         {
-            res = adb__sync_proto_handle_okay(&sync);
+            res = adb__sync_proto_handle_okay(sync);
             if(res != ADB_ERR_OK)
-                goto cleanup;
+                return res;
             continue;
         }
 
-        if(sync.pkt.command != ADB__CMD_WRTE)
+        if(sync->pkt.command != ADB__CMD_WRTE)
+            return ADB_ERR_PROTOCOL;
+
+        pkt_payload = sync->pkt_payload;
+        payload_size = sync->pkt.payload_size;
+
+        while(pkt_offset < payload_size && written < out_size)
         {
-            res = ADB_ERR_PROTOCOL;
-            goto cleanup;
-        }
+            size_t pkt_remaining = 0U;
+            size_t out_remaining = 0U;
+            size_t available = 0U;
 
-        pkt_payload = sync.pkt_payload;
-        payload_size = sync.pkt.payload_size;
+            pkt_remaining = payload_size - pkt_offset;
+            out_remaining = out_size - written;
+            available = ADB__MIN(pkt_remaining, out_remaining);
 
-        while(pkt_offset < payload_size)
-        {
-            size_t pkt_remaining = payload_size - pkt_offset;
-            size_t stat_remaining = sizeof(tmp) - written;
-            size_t available = ADB__MIN(pkt_remaining, stat_remaining);
-
-            memcpy((uint8_t *)&tmp + written,
+            memcpy((uint8_t *)out + written,
                     pkt_payload + pkt_offset, available);
 
             pkt_offset += available;
             written += available;
-
-            if(written == sizeof(tmp))
-            {
-                data_done = true;
-                break;
-            }
         }
 
-        res = adb__sync_proto_ack(&sync);
+        res = adb__sync_proto_ack(sync);
         if(res != ADB_ERR_OK)
-            goto cleanup;
+            return res;
     }
 
-    if(tmp.id != ADB__SYNC_ID_STAT_V2 && tmp.id != ADB__SYNC_ID_LSTAT_V2)
-    {
-        ADB__ERROR("unexpected response message ID");
-        ADB__INFO("expected: 0x%08X/0x%08X (%.4s/%.4s), got: 0x%08X (%.4s)",
-                (uint32_t)ADB__SYNC_ID_STAT_V2, 
-                (uint32_t)ADB__SYNC_ID_LSTAT_V2, 
-                (uint8_t*)ADB__PTR(uint32_t, ADB__SYNC_ID_STAT_V2),
-                (uint8_t*)ADB__PTR(uint32_t, ADB__SYNC_ID_LSTAT_V2),
-                tmp.id, (uint8_t*)&tmp.id);
-        goto cleanup;
-    }
-
-    if(tmp.error != 0)
-    {
-        ADB__ERROR("failed to get file information from device");
-        if(out_errno)
-            *out_errno = adb__sync_error_to_errno(tmp.error);
-        ADB__INFO("reason: %s", strerror(*out_errno));
-        res = ADB_ERR_IO;
-        goto cleanup;
-    }
-
-    *out = tmp;
-    adb__send_quit(&sync);
-    ADB__INFO("got file information successfully");
-
-cleanup:
-    adb__sync_proto_close(&sync);
-    return res;
+    return ADB_ERR_OK;
 }
-
 
 static adb_error_t adb_sync_stat_v1(
         adb_conn_t *conn,
@@ -947,8 +901,6 @@ static adb_error_t adb_sync_stat_v1(
 {
     adb_error_t res = ADB_ERR_OK;
     adb__sync_t sync = {0};
-    bool data_done = false;
-    size_t written = 0U;
     adb__sync_stat_v1_t tmp = {0};
 
     if(!conn || !remote_path || !out)
@@ -961,72 +913,28 @@ static adb_error_t adb_sync_stat_v1(
     if(res != ADB_ERR_OK)
         return res;
 
-    res = adb__send_request(&sync, ADB__SYNC_ID_STAT_V2, remote_path);
+    res = adb__send_request(&sync, 
+            ADB__SYNC_ID_LSTAT_V1, remote_path);
     if(res != ADB_ERR_OK)
         goto cleanup;
 
-    while(!data_done)
-    {
-        uint8_t *pkt_payload = NULL;
-        size_t payload_size = 0U;
-        size_t pkt_offset = 0U;
-
-        res = adb__sync_proto_read(&sync);
-        if(res != ADB_ERR_OK)
-            goto cleanup;
-
-        if(sync.pkt.command == ADB__CMD_OKAY)
-        {
-            res = adb__sync_proto_handle_okay(&sync);
-            if(res != ADB_ERR_OK)
-                goto cleanup;
-            continue;
-        }
-
-        if(sync.pkt.command != ADB__CMD_WRTE)
-        {
-            res = ADB_ERR_PROTOCOL;
-            goto cleanup;
-        }
-
-        pkt_payload = sync.pkt_payload;
-        payload_size = sync.pkt.payload_size;
-
-        while(pkt_offset < payload_size)
-        {
-            size_t pkt_remaining = payload_size - pkt_offset;
-            size_t stat_remaining = sizeof(tmp) - written;
-            size_t available = ADB__MIN(pkt_remaining, stat_remaining);
-
-            memcpy((uint8_t *)&tmp + written,
-                    pkt_payload + pkt_offset, available);
-
-            pkt_offset += available;
-            written += available;
-
-            if(written == sizeof(tmp))
-            {
-                data_done = true;
-                break;
-            }
-        }
-
-        res = adb__sync_proto_ack(&sync);
-        if(res != ADB_ERR_OK)
-            goto cleanup;
-    }
+    res = adb__sync_read_fixed_response(&sync, 
+            &tmp, sizeof(tmp));
+    if(res != ADB_ERR_OK)
+        goto cleanup;
 
     if(tmp.id != ADB__SYNC_ID_LSTAT_V1)
     {
         ADB__ERROR("unexpected response message ID");
         ADB__INFO("expected: 0x%08X (%.4s), got: 0x%08X (%.4s)",
-                (uint32_t)ADB__SYNC_ID_LSTAT_V1, 
-                (uint8_t*)ADB__PTR(uint32_t, ADB__SYNC_ID_LSTAT_V1),
-                tmp.id, (uint8_t*)&tmp.id);
+                (uint32_t)ADB__SYNC_ID_LSTAT_V1,
+                (uint8_t *)ADB__PTR(uint32_t, ADB__SYNC_ID_LSTAT_V1),
+                tmp.id, (uint8_t *)&tmp.id);
+        res = ADB_ERR_PROTOCOL;
         goto cleanup;
     }
 
-    if(tmp.mode == 0 && tmp.size == 0 && tmp.mtime == 0)
+    if(tmp.mode == 0U && tmp.size == 0U && tmp.mtime == 0U)
     {
         ADB__ERROR("failed to get file information from device");
         res = ADB_ERR_IO;
@@ -1045,7 +953,71 @@ cleanup:
     adb__sync_proto_close(&sync);
     return res;
 }
+static adb_error_t adb_sync_stat_v2(
+        adb_conn_t *conn,
+        const char *remote_path,
+        adb_sync_stat_t *out,
+        int *out_errno)
+{
+    adb_error_t res = ADB_ERR_OK;
+    adb__sync_t sync = {0};
+    adb_sync_stat_t tmp = {0};
+    int error_num = 0;
 
+    if(!conn || !remote_path || !out)
+        return ADB_ERR_PARAM;
+
+    ADB__INFO("getting file information from device at \"%s\"", remote_path);
+    res = adb__sync_proto_open(&sync, conn);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    res = adb__send_request(&sync, 
+            ADB__SYNC_ID_STAT_V2, remote_path);
+    if(res != ADB_ERR_OK)
+        goto cleanup;
+
+    res = adb__sync_read_fixed_response(&sync, 
+            &tmp, sizeof(tmp));
+    if(res != ADB_ERR_OK)
+        goto cleanup;
+
+    if(tmp.id != ADB__SYNC_ID_STAT_V2 &&
+            tmp.id != ADB__SYNC_ID_LSTAT_V2)
+    {
+        ADB__ERROR("unexpected response message ID");
+        ADB__INFO("expected: 0x%08X/0x%08X (%.4s/%.4s), got: 0x%08X (%.4s)",
+                (uint32_t)ADB__SYNC_ID_STAT_V2,
+                (uint32_t)ADB__SYNC_ID_LSTAT_V2,
+                (uint8_t *)ADB__PTR(uint32_t, ADB__SYNC_ID_STAT_V2),
+                (uint8_t *)ADB__PTR(uint32_t, ADB__SYNC_ID_LSTAT_V2),
+                tmp.id, (uint8_t *)&tmp.id);
+        res = ADB_ERR_PROTOCOL;
+        goto cleanup;
+    }
+
+    if(tmp.error != 0U)
+    {
+        ADB__ERROR("failed to get file information from device");
+
+        error_num = adb__sync_error_to_errno(tmp.error);
+        if(out_errno)
+            *out_errno = error_num;
+
+        ADB__INFO("reason: %s", strerror(error_num));
+        res = ADB_ERR_IO;
+        goto cleanup;
+    }
+
+    *out = tmp;
+    (void)adb__send_request; /* No-op if removed; see note below. */
+    adb__send_quit(&sync);
+    ADB__INFO("got file information successfully");
+
+cleanup:
+    adb__sync_proto_close(&sync);
+    return res;
+}
 adb_error_t adb_sync_stat(
         adb_conn_t *conn,
         const char *remote_path,
