@@ -81,6 +81,44 @@ static int adb__tls_bio_recv(
     return (int)size;
 }
 
+static int adb__tls_bio_recv_timeout(
+        void *userdata,
+        unsigned char *buf,
+        size_t size,
+        const uint32_t timeout)
+{
+    adb__tls_t *tls = userdata;
+
+    adb_error_t err = ADB_ERR_OK;
+
+    if(!tls || !tls->transport->read)
+        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+
+    if(timeout == 0)
+    {
+        err = tls->transport->read(
+                tls->transport->userdata,
+                buf, size);
+    } else {
+        err = tls->transport->read_timeout(
+                tls->transport->userdata,
+                buf, size, timeout);
+    }
+
+    tls->bio_error = err;
+    if(err != ADB_ERR_OK)
+    {
+        if(err == ADB_ERR_DISCONNECTED)
+            return MBEDTLS_ERR_SSL_CONN_EOF;
+        else if(err == ADB_ERR_TIMEOUT)
+            return MBEDTLS_ERR_SSL_TIMEOUT;
+        else
+            return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    }
+
+    return (int)size;
+}
+
 adb_error_t adb__tls_create(
         adb__tls_t **out_tls,
         adb_ctx_t *ctx,
@@ -158,8 +196,7 @@ adb_error_t adb__tls_create(
             tmp,
             adb__tls_bio_send,
             adb__tls_bio_recv,
-            NULL);
-
+            adb__tls_bio_recv_timeout);
     tmp->transport = transport;
     tmp->bio_error = ADB_ERR_OK;
     *out_tls = tmp;
@@ -229,36 +266,47 @@ adb_error_t adb__tls_read(
         size_t size)
 {
     size_t offset = 0;
-    int ret = 0;
+    size_t read_size = 0;
     if(!tls)
         return ADB_ERR_PARAM;
     if(!buf && size)
         return ADB_ERR_PARAM;
 
-    while(offset < size)
+    if(tls->queue.size > size)
     {
+        ADB__DEBUG("pop %zu bytes from TLS queue, %zu bytes left",
+                size, tls->queue.size);
+        adb__queue_pop(&tls->queue, buf, size);
+        return ADB_ERR_OK;
+    }
+
+    read_size = size - tls->queue.size;
+    adb__queue_pop(&tls->queue, buf, tls->queue.size);
+    while(offset < read_size)
+    {
+        int res = 0;
+
         tls->bio_error = ADB_ERR_OK;
-
-        ret = mbedtls_ssl_read(
+        res = mbedtls_ssl_read(
                 &tls->ssl,
-                (unsigned char *)buf + offset,
-                size - offset);
+                (unsigned char *)buf + (size - read_size) + offset,
+                read_size - offset);
 
-        if(ret > 0)
+        if(res > 0)
         {
-            offset += (size_t)ret;
+            offset += (size_t)res;
             continue;
         }
 
         if(tls->bio_error != ADB_ERR_OK)
             return tls->bio_error;
 
-        adb__log_err_mbedtls(ret, "TLS read failed");
+        adb__log_err_mbedtls(res, "TLS read failed");
 
-        if(ret == 0 ||
-           ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY ||
-           ret == MBEDTLS_ERR_SSL_CONN_EOF ||
-           ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
+        if(res == 0 ||
+           res == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY ||
+           res == MBEDTLS_ERR_SSL_CONN_EOF ||
+           res == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
             return ADB_ERR_DISCONNECTED;
 
         return ADB_ERR_IO;

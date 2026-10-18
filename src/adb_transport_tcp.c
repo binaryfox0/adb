@@ -54,12 +54,42 @@ ADB__INLINE adb_error_t adb__tcp_error_from_errno(
     }
 }
 
+static void adb__tcp_dump_error(
+        const int fd)
+{
+    int socket_error = 0;
+    socklen_t length = (socklen_t)sizeof(socket_error);
+    struct tcp_info info = {0};
+    socklen_t info_length = (socklen_t)sizeof(info);
+
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR,
+                   &socket_error, &length) == 0)
+        ADB__DEBUG("SO_ERROR=%d (%s)", socket_error,
+                strerror(socket_error));
+    else
+        ADB__DEBUG("getsockopt SO_ERROR failed: %s", strerror(errno));
+
+    if (getsockopt(fd, IPPROTO_TCP, TCP_INFO,
+                   &info, &info_length) == 0)
+        ADB__DEBUG("TCP state=%u, retransmits=%u, probes=%u, "
+                        "backoff=%u, unacked=%u, total_retrans=%u",
+                (unsigned int)info.tcpi_state,
+                (unsigned int)info.tcpi_retransmits,
+                (unsigned int)info.tcpi_probes,
+                (unsigned int)info.tcpi_backoff,
+                (unsigned int)info.tcpi_unacked,
+                (unsigned int)info.tcpi_total_retrans);
+    else
+        ADB__DEBUG("getsockopt TCP_INFO failed: %s", strerror(errno));
+}
 static adb_error_t adb__tcp_read(
         void *userdata,
         void *buf,
         size_t size)
 {
     int fd = ((adb__tcp_transport_t*)userdata)->fd;
+    adb__queue_t *queue = &((adb__tcp_transport_t*)userdata)->queue;
+    size_t read_size = 0;
     uint8_t *data = buf;
     size_t offset = 0;
     ssize_t ret = 0;
@@ -70,11 +100,25 @@ static adb_error_t adb__tcp_read(
     if(!buf && size)
         return ADB_ERR_PARAM;
 
-    while(offset < size)
+    if(queue->size > size)
     {
-        ret = recv(fd, data + offset, size - offset, 0);
+        adb__queue_pop(queue, buf, size);
+        ADB__DEBUG("pop %zu bytes from TCP queue, %zu bytes left",
+                size, queue->size);
+        return ADB_ERR_OK;
+    }
+
+    read_size = size - queue->size;
+    adb__queue_pop(queue, buf, queue->size);
+    while(offset < read_size)
+    {
+        ret = recv(fd, data + (size - read_size) + offset, 
+                read_size - offset, 0);
         if(ret < 0)
+        {
+            adb__tcp_dump_error(fd);
             return adb__tcp_error_from_errno(errno);
+        }
         if(ret == 0)
             return ADB_ERR_DISCONNECTED;
 
@@ -156,7 +200,8 @@ static adb_error_t adb__tcp_read_timeout(
         if(errno == EINTR)
             continue;
 
-        return ADB_ERR_IO;
+        adb__tcp_dump_error(fd);
+        return adb__tcp_error_from_errno(errno);
     }
 }
 
@@ -180,7 +225,10 @@ static adb_error_t adb__tcp_write(
     {
         ret = send(fd, data + offset, size - offset, 0);
         if(ret < 0)
+        {
+            adb__tcp_dump_error(fd);
             return adb__tcp_error_from_errno(errno);
+        }
         if(ret == 0)
             return ADB_ERR_DISCONNECTED;
 
@@ -224,17 +272,17 @@ static bool adb__tcp_set_sockopts(
         goto fail;
 
     if(setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE,
-                (int[1]){ADB__TCP_KEEPALIVE_INTERVAL}, 
+                ADB__PTR(int, ADB__TCP_KEEPALIVE_INTERVAL),
                 sizeof(int)) < 0)
         goto fail;
     
     if(setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL,
-                (int[1]){ADB__TCP_KEEPALIVE_INTERVAL}, 
+                ADB__PTR(int, ADB__TCP_KEEPALIVE_INTERVAL),
                 sizeof(int)) < 0)
         goto fail;
     
     if(setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT,
-                (int[1]){ADB__TCP_KEEPCNT}, 
+                ADB__PTR(int, ADB__TCP_KEEPALIVE_INTERVAL),
                 sizeof(int)) < 0)
         goto fail;
 

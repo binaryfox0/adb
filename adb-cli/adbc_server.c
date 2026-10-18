@@ -27,12 +27,12 @@ typedef struct
     adb_ctx_t *adb_ctx;
     adbc_dynarr_t devices;
     bool quit;
-} adbc_server_ctx_t;
+} adbc__server_ctx_t;
 
 typedef const char *adbc__server_error_t;
 
 typedef adbc__server_error_t (*adbc__server_cmd_handler_fn)(
-        adbc_server_ctx_t *ctx,
+        adbc__server_ctx_t *ctx,
         yyjson_val *req_root,
         yyjson_mut_doc *response_doc,
         yyjson_mut_val *response_root);
@@ -69,7 +69,7 @@ static adbc__server_error_t adbc__json_get_str(
 }
 
 static adbc__server_error_t adbc__cmd_quit(
-        adbc_server_ctx_t *ctx,
+        adbc__server_ctx_t *ctx,
         yyjson_val *req_root,
         yyjson_mut_doc *response_doc,
         yyjson_mut_val *response_root)
@@ -86,7 +86,7 @@ static adbc__server_error_t adbc__cmd_quit(
 }
 
 static adbc__server_error_t adbc__cmd_devices(
-        adbc_server_ctx_t *ctx,
+        adbc__server_ctx_t *ctx,
         yyjson_val *req_root,
         yyjson_mut_doc *response_doc,
         yyjson_mut_val *response_root)
@@ -160,7 +160,7 @@ static adbc__server_error_t adbc__cmd_devices(
 }
 
 static adbc__server_error_t adbc__cmd_connect(
-        adbc_server_ctx_t *ctx,
+        adbc__server_ctx_t *ctx,
         yyjson_val *req_root,
         yyjson_mut_doc *response_doc,
         yyjson_mut_val *response_root)
@@ -195,21 +195,7 @@ static adbc__server_error_t adbc__cmd_connect(
             false, &key_path);
     if(error != NULL)
         return error;
-
-    if(key_path == NULL)
-    {
-        home_dir = adbc_util_home_dir();
-        if(home_dir == NULL)
-            return "failed to determine home directory";
-
-        path_length = snprintf(key_path_buffer, sizeof(key_path_buffer),
-                "%s/.android/adbkey", home_dir);
-        if(path_length < 0 || (size_t)path_length >= sizeof(key_path_buffer))
-            return "default ADB key path is too long";
-
-        key_path = key_path_buffer;
-    }
-    else if(key_path[0] == '\0')
+    if(key_path[0] == '\0')
         return "field 'key_path' must not be empty";
 
     res = adb_key_load(&key, ctx->adb_ctx, key_path);
@@ -223,7 +209,6 @@ static adbc__server_error_t adbc__cmd_connect(
     {
         adb_conn_t **candidate =
             &((adb_conn_t**)ctx->devices.data)[i];
-
         if(!*candidate)
         {
             conn = candidate;
@@ -239,8 +224,8 @@ static adbc__server_error_t adbc__cmd_connect(
             goto cleanup;
         }
 
-        conn = &((adb_conn_t**)ctx->devices.data)
-            [ctx->devices.size - 1U];
+        conn = &adbc_dynarr_get(&ctx->devices, 
+                adb_conn_t*, ctx->devices.size - 1);
     }
 
     if(!adbc_util_parse_endpoint(serial, 
@@ -255,14 +240,14 @@ static adbc__server_error_t adbc__cmd_connect(
 
     if(res != ADB_ERR_OK)
     {
-        error = "failed to create ADB connection";
+        error = adb_strerror(res);
         goto cleanup;
     }
 
     res = adb_handshake(*conn, key);
     if(res != ADB_ERR_OK)
     {
-        error = "ADB handshake failed";
+        error = adb_strerror(res);
         goto cleanup;
     }
 
@@ -278,7 +263,59 @@ cleanup:
     return error;
 }
 
-static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
+
+static adbc__server_error_t adbc__cmd_push(
+    adbc__server_ctx_t *ctx,
+    yyjson_val *req_root,
+    yyjson_mut_doc *response_doc,
+    yyjson_mut_val *response_root)
+{
+    adb_conn_t **conn = NULL;
+    adb_conn_t **tmp = NULL;
+    const char *local_path = NULL;
+    const char *remote_path = NULL;
+    adb_error_t res = ADB_ERR_OK;
+    adbc__server_error_t error = NULL;
+
+    (void)response_doc;
+    (void)response_root;
+
+    for(size_t i = 0; i < ctx->devices.size; i++)
+    {
+        tmp = &adbc_dynarr_get(&ctx->devices, adb_conn_t*, i);
+        if(!*tmp)
+            continue;
+        if(conn)
+            return "more than one device was connected";
+        conn = tmp;
+    }
+
+    if (!conn)
+        return "no device was connected";
+
+    error = adbc__json_get_str(
+        req_root, "local_path", true, &local_path);
+    if (error)
+        goto end;
+
+    error = adbc__json_get_str(
+        req_root, "remote_path", true, &remote_path);
+    if (error)
+        goto end;
+
+    res = adb_sync_push_file(*conn, local_path, remote_path);
+    if (res != ADB_ERR_OK)
+        error = adb_strerror(res);
+
+end:
+    if(error)
+    {
+        adb_conn_destroy(*conn);
+        *conn = NULL;
+    }
+    return error;
+}
+static bool adbc__handle_cmd(adbc__server_ctx_t *ctx, const int client_fd)
 {
     static const struct
     {
@@ -288,7 +325,8 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
     {
         { "quit", adbc__cmd_quit },
         { "devices", adbc__cmd_devices },
-        { "connect", adbc__cmd_connect }
+        { "connect", adbc__cmd_connect },
+        { "push", adbc__cmd_push }
     };
 
     bool result = false;
@@ -338,8 +376,8 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
     req_root = yyjson_doc_get_root(req_doc);
     if(!yyjson_is_obj(req_root))
     {
-        ADBC_ERROR("malformed server JSON");
-        error = "expected a JSON object";
+        ADBC_ERROR("malformed server JSON was recieved");
+        error = "expected a valid JSON object";
         goto respond;
     }
 
@@ -351,7 +389,7 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
     if(strcmp(type, "cmd") != 0)
     {
         ADBC_ERROR("unexpected packet type: \"%s\"", type);
-        error = "unexpected packet type";
+        error = "unexpected packet type was recieved";
         goto respond;
     }
 
@@ -360,6 +398,7 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
     if(error != NULL)
         goto respond;
 
+    ADBC_INFO("recieved command \"%s\" from client", cmd);
     for(size_t i = 0U; i < ADBC_ARRSZ(handlers); i++)
     {
         if(strcmp(cmd, handlers[i].cmd) == 0)
@@ -373,8 +412,8 @@ static bool adbc__handle_cmd(adbc_server_ctx_t *ctx, const int client_fd)
 
     if(!found)
     {
-        ADBC_ERROR("unknown command: %s", cmd);
-        error = "unknown command";
+        ADBC_ERROR("unknown command %s was recieved", cmd);
+        error = "unknown command was recieved";
     }
 
 respond:
@@ -402,7 +441,8 @@ respond:
         result = adbc_send_json(client_fd, response_doc);
         if(!result)
             ADBC_ERROR("failed to send command response");
-    }
+    } else
+        result = true;
 
 cleanup:
     if(req_doc != NULL)
@@ -417,7 +457,7 @@ void start_server_cmd(void *data)
 {
     adbc_cmd_options_t *options = data;
     struct sockaddr_in address = {0};
-    adbc_server_ctx_t ctx = {0};
+    adbc__server_ctx_t ctx = {0};
     int fd = -1;
     int client_fd = -1;
     int option = 1;
@@ -438,7 +478,8 @@ void start_server_cmd(void *data)
         return;
     }
 
-    if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) != 0)
+    if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, 
+                &option, sizeof(option)) != 0)
     {
         adbc_log_err_errno("failed to set socket options");
         goto cleanup;
@@ -471,6 +512,7 @@ void start_server_cmd(void *data)
     adbc_dynarr_init(&ctx.devices, sizeof(adb_conn_t*));
     while(!ctx.quit)
     {
+        ADBC_INFO("waiting for the next command");
         client_fd = accept(fd, NULL, NULL);
         if(client_fd < 0)
         {

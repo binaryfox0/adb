@@ -1,5 +1,8 @@
 #include "adb_packet.h"
 
+#include <stdlib.h>
+
+
 #include "adb_conn_priv.h"
 #include "adb_log_priv.h"
 #include "adb_utils.h"
@@ -208,9 +211,9 @@ success:
  * for both the packet header and payload (if header was read, 
  * but payload timed out), not timeout for entire packet
  */
-adb_error_t adb__packet_read_timeout(
+ADB__NODISCARD adb_error_t adb__pktreader_read(
+        adb__pktreader_t *reader,
         adb_conn_t *conn,
-        adb__packet_reader_t *reader,
         const uint32_t timeout_ms)
 {
     adb_error_t res = ADB_ERR_OK;
@@ -261,13 +264,48 @@ adb_error_t adb__packet_read_timeout(
     return ADB_ERR_OK;
 }
 
-void adb__packet_reader_reset(
-        adb__packet_reader_t *reader)
+adb_error_t adb__pktreader_reset(
+        adb__pktreader_t *reader)
 {
     if(!reader)
+        return ADB_ERR_PARAM;
+
+    memset(reader, 0, sizeof(*reader));
+    return ADB_ERR_OK;
+}
+
+void adb__pktreader_destroy(
+        adb_conn_t *conn,
+        adb__pktreader_t *reader)
+{
+
+    if(!reader)
         return;
+
+    if(reader->header_ready && !reader->payload)
+    {
+        uint32_t remaining = reader->pkt.payload_size;
+        ADB__DEBUG("discard %u unread bytes from packet reader", remaining);
+        while(remaining > 0)
+        {
+            uint8_t discard[4096] = {0};
+            uint32_t chunk_size = 0;
+            adb_error_t res = ADB_ERR_OK;
+
+            chunk_size = ADB__MIN(remaining, sizeof(discard));
+            res = adb__conn_read(conn, discard, chunk_size);
+            if(res != ADB_ERR_OK)
+            {
+                adb__log_err_adb(res, "failed to discard packet payload");
+                break;
+            }
+
+            remaining -= chunk_size;
+        }
+    }
+
     adb__free(reader->payload);
-    *reader = (adb__packet_reader_t){0};
+    *reader = (adb__pktreader_t){0};
 }
 
 bool adb__packet_check_cmd(

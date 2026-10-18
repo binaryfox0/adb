@@ -106,7 +106,7 @@ bool adbc_recv_json(
         return false;
     }
 
-    adbc_log_debug_json_immut(yyjson_doc_get_root(doc), "read payload");
+    //adbc_log_debug_json_immut(yyjson_doc_get_root(doc), "read payload");
     *out_doc = doc;
     free(json);
     return true;
@@ -179,7 +179,7 @@ bool adbc_send_json(const int fd, yyjson_mut_doc *doc)
     if(fd < 0 || !doc)
         return false;
 
-    adbc_log_debug_json_mut(yyjson_mut_doc_get_root(doc), "write payload");
+    //adbc_log_debug_json_mut(yyjson_mut_doc_get_root(doc), "write payload");
     json = yyjson_mut_write(doc, 0, &json_len);
     if(!json)
     {

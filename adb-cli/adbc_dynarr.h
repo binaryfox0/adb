@@ -5,10 +5,14 @@
 #include <stdbool.h>
 
 #define adbc_dynarr_foreach(a, type, v) \
-    for(size_t i = 0; i < (a)->size; i++, (v) = ((type*)(a)->data)[i])
+    for (size_t i = 0; \
+         i < (a)->size && (((v) = ((type *)(a)->data)[i]), 1); \
+         i++)
 #define adbc_dynarr_foreach_rev(a, type, v) \
-    for(size_t i = (a)->size; i-- > 0; (v) = ((type*)(a)->data)[i])
-#define adbc_dynarr_get(a, type, idx) ((((type*)(a)->data))[(idx)])
+    for (size_t i = (a)->size; \
+         i-- > 0 && (((v) = ((type *)(a)->data)[i]), 1); )
+#define adbc_dynarr_get(a, type, idx) \
+    (((type *)(a)->data)[(idx)])
 
 typedef struct 
 {

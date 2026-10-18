@@ -33,5 +33,5 @@ void devices_cmd(void *data);
 void pair_cmd(void *data);
 void pair_qr_cmd(void *data);
 void connect_cmd(void *data);
-
+void push_cmd(void *data);
 #endif

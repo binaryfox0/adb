@@ -45,7 +45,7 @@ typedef struct
     adb__packet_t pkt;
     bool header_ready;
     void *payload;
-} adb__packet_reader_t;
+} adb__pktreader_t;
 
 ADB__NODISCARD adb_error_t adb__packet_write(
         adb_conn_t *conn,
@@ -69,13 +69,18 @@ ADB__NODISCARD adb_error_t adb__packet_read_into(
         void *out_payload,
         const size_t max_size);
 
-ADB__NODISCARD adb_error_t adb__packet_read_timeout(
+ADB__NODISCARD adb_error_t adb__pktreader_read(
+        adb__pktreader_t *reader,
         adb_conn_t *conn,
-        adb__packet_reader_t *reader,
         const uint32_t timeout_ms);
 
-void adb__packet_reader_reset(
-        adb__packet_reader_t *reader);
+adb_error_t adb__pktreader_reset(
+        adb__pktreader_t *reader);
+
+void adb__pktreader_destroy(
+        adb_conn_t *conn,
+        adb__pktreader_t *reader);
+
 
 bool adb__packet_check_cmd(
         const adb__packet_t *pkt,

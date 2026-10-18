@@ -525,7 +525,7 @@ adb_error_t adb_sync_pull(
     for(size_t i = 0; i < ADB__ARRSZ(check_orders); i++)
     {
         /* XXX: dunno it needs to try another if current failed */
-        if(adb__has_feature(conn, check_orders[i].feature))
+        if(adb__conn_support(conn, check_orders[i].feature))
         {
             return adb__pull_v2(conn, remote_path, 
                     check_orders[i].decomp_type, 
@@ -740,10 +740,35 @@ adb_error_t adb_sync_push(
                     sizeof(adb__sync_data_t) + out_used);
             if(res != ADB_ERR_OK)
                 goto cleanup;
-                
-            res = adb__sync_proto_check_ack(&sync);
-            if(res != ADB_ERR_OK)
-                goto cleanup;
+               
+            for(;;)
+            {
+                res = adb__sync_proto_read_timeout(&sync, 1);
+                if(res == ADB_ERR_TIMEOUT)
+                {
+                    while(sync.our_asb < 0)
+                    {
+                        res = adb__sync_proto_read(&sync);
+                        if(res != ADB_ERR_OK)
+                            goto cleanup;
+                        if(!adb__packet_check_cmd(&sync.pkt, ADB__CMD_OKAY))
+                            return ADB_ERR_PROTOCOL;
+                        res = adb__sync_proto_handle_okay(&sync);
+                        if(res != ADB_ERR_OK)
+                            return res;
+                    }
+                    break;
+                }
+                else if(res != ADB_ERR_OK)
+                    goto cleanup;
+
+                if(!adb__packet_check_cmd(&sync.pkt, ADB__CMD_OKAY))
+                    return ADB_ERR_PROTOCOL;
+                res = adb__sync_proto_handle_okay(&sync);
+                if(res != ADB_ERR_OK)
+                    return res;
+
+            }
         }
     }
 
@@ -1010,7 +1035,6 @@ static adb_error_t adb_sync_stat_v2(
     }
 
     *out = tmp;
-    (void)adb__send_request; /* No-op if removed; see note below. */
     adb__send_quit(&sync);
     ADB__INFO("got file information successfully");
 
@@ -1029,7 +1053,7 @@ adb_error_t adb_sync_stat(
    
     if(out_errno)
         *out_errno = 0;
-    if(adb__has_feature(conn, ADB__FEATURE_STAT_V2))
+    if(adb__conn_support(conn, ADB__FEATURE_STAT_V2))
         return adb_sync_stat_v2(conn, remote_path, out, out_errno);
     else
         return adb_sync_stat_v1(conn, remote_path, out, out_errno);

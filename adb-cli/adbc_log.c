@@ -372,10 +372,19 @@ void adbc_log_server_callback(
 
     switch(level)
     {
-        case ADB_LOG_DEBUG: ADBC_DEBUG("%s", message); break;
-        case ADB_LOG_INFO:  ADBC_INFO("%s", message); break;
-        case ADB_LOG_WARN:  ADBC_WARN("%s", message); break;
-        case ADB_LOG_ERROR: ADBC_ERROR("%s", message); break;
+        case ADB_LOG_DEBUG: 
+            aparse_log("adb", APARSE__DEBUG_LABEL, "%s", message); 
+            break;
+        case ADB_LOG_INFO:
+            aparse_log("adb", APARSE__INFO_LABEL, "%s", message); 
+            break;
+        case ADB_LOG_WARN:
+            aparse_log("adb", APARSE__WARN_LABEL, "%s", message); 
+            break;
+        case ADB_LOG_ERROR:
+            aparse_log("adb", APARSE__ERROR_LABEL, "%s", message); 
+            break;
+
         case ADB__LOG_COUNT:
         default: break;
     }
@@ -421,15 +430,15 @@ bool adbc_log_handle_server(
     level_str = yyjson_get_str(level);
     message = yyjson_get_str(msg);
     if(strcmp(level_str, "debug") == 0)
-        ADBC_DEBUG("%s", message);
+        aparse_log("adb", APARSE__DEBUG_LABEL, "%s", message); 
     else if(strcmp(level_str, "info") == 0)
-        ADBC_INFO("%s", message);
+        aparse_log("adb", APARSE__INFO_LABEL, "%s", message); 
     else if(strcmp(level_str, "warn") == 0)
-        ADBC_WARN("%s", message);
+        aparse_log("adb", APARSE__WARN_LABEL, "%s", message); 
     else if(strcmp(level_str, "error") == 0)
-        ADBC_ERROR("%s", message);
+        aparse_log("adb", APARSE__ERROR_LABEL, "%s", message); 
     else
-        ADBC_WARN("unknown: %s", level_str);
+        aparse_log("adb", "unknown", "%s", message); 
 
     return true;
 }

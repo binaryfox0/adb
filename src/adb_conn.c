@@ -62,6 +62,8 @@ typedef struct adb_conn
     adb__str_t model;
     adb__str_t device;
     adb__str_t features;
+
+    uint32_t next_id;
 } adb_conn_t;
 
 static const char *adb__conn_state_readable[ADB__CONN_STATE_COUNT] =
@@ -81,6 +83,7 @@ static adb_error_t adb__conn_post_init(
         return ADB_ERR_PARAM;
 
     conn->max_payload_size = ADB__PACKET_MAX_PAYLOAD_SIZE;
+    conn->next_id = 1;
     return ADB_ERR_OK;
 }
 
@@ -497,7 +500,8 @@ adb_error_t adb__conn_read(
     }
     
     if(res == ADB_ERR_OK)
-        adb__log_payload(buf, size, "read data");
+        adb__log_payload(buf, size, 
+                "read %zu bytes of data", size);
     return res;
 }
 
@@ -525,7 +529,9 @@ adb_error_t adb__conn_read_timeout(
     }
     
     if(res == ADB_ERR_OK)
-        adb__log_payload(buf, size, "read data");
+        adb__log_payload(buf, size, 
+                "read %zu bytes of data with %ums of timeout", 
+                size, timeout_ms);
     return res;
 }
 
@@ -564,7 +570,7 @@ adb_error_t adb__conn_write(
     if(!conn || !buf || size == 0)
         return ADB_ERR_PARAM;
 
-    adb__log_payload(buf, size, "write data");
+    adb__log_payload(buf, size, "write %zu bytes of data", size);
     if(conn->tls)
     {
         return adb__tls_write(
@@ -594,27 +600,11 @@ adb_ctx_t *adb__conn_get_ctx(
     return conn ? conn->ctx : NULL;
 }
 
-bool adb__has_feature(
+bool adb__conn_support(
         adb_conn_t *conn,
         const char *feature)
 {
-    adb__str_t cur = {0};
-    adb__str_t token = {0};
-    if(!conn || !feature)
-        return false;
-
-    cur = conn->features;
-    while(adb__str_next_tok(&cur, ',', &token))
-    {
-        if(adb__str_compare_cstr(&token, feature))
-            return true;
-    }
-    return false;
-}
-
-bool adb__feature_support(
-        const char *feature)
-{
+    bool lib_support = false;
     adb__str_t cur = {0};
     adb__str_t token = {0};
     if(!feature)
@@ -624,7 +614,25 @@ bool adb__feature_support(
     while(adb__str_next_tok(&cur, ',', &token))
     {
         if(adb__str_compare_cstr(&token, feature))
+        {
+            lib_support = true;
+            break;
+        }
+    }
+
+    if(!lib_support)
+        return false;
+    
+    cur = conn->features;
+    while(adb__str_next_tok(&cur, ',', &token))
+    {
+        if(adb__str_compare_cstr(&token, feature))
             return true;
     }
     return false;
+}
+
+uint32_t adb__conn_next_id(
+        adb_conn_t *conn) {
+    return conn ? conn->next_id++ : 1;
 }

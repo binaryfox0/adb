@@ -24,7 +24,7 @@ typedef struct adb__sync
     int32_t our_asb;
     bool opened;
     bool send_ready;
-    adb__packet_reader_t pkt_reader;
+    adb__pktreader_t pkt_reader;
 } adb__sync_t;
 
 ADB__NODISCARD adb_error_t adb__sync_proto_open(
@@ -38,6 +38,10 @@ ADB__NODISCARD adb_error_t adb__sync_proto_write(
 
 ADB__NODISCARD adb_error_t adb__sync_proto_read(
         adb__sync_t *sync);
+
+ADB__NODISCARD adb_error_t adb__sync_proto_read_timeout(
+        adb__sync_t *sync,
+        const uint32_t timeout_ms);
 
 adb_error_t adb__sync_proto_handle_okay(
         adb__sync_t *sync);

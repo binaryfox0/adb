@@ -433,8 +433,6 @@ void connect_cmd(void *data)
     yyjson_mut_val *root = NULL;
     bool done = false;
 
-    adb_log_set(adbc_log_client_callback, NULL, options->opt_lvl);
-
     fd = adbc__connect_server();
     if(fd < 0)
         goto cleanup;
@@ -458,9 +456,103 @@ void connect_cmd(void *data)
     yyjson_mut_doc_set_root(doc, root);
     if(!yyjson_mut_obj_add_str(doc, root, "type", "cmd") ||
        !yyjson_mut_obj_add_str(doc, root, "cmd", "connect") ||
-       !yyjson_mut_obj_add_str(doc, root, "serial", options->serial))
+       !yyjson_mut_obj_add_str(doc, root, "serial", options->serial) ||
+       !yyjson_mut_obj_add_str(doc, root, "key_path", options->opt_key))
     {
         ADBC_ERROR("failed to build connect command");
+        ADBC_INFO("reason: JSON allocation failed");
+        goto cleanup;
+    }
+
+
+    if(!adbc_send_json(fd, doc))
+    {
+        ADBC_ERROR("failed to send connect command");
+        ADBC_INFO("reason: JSON send operation failed");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_free(doc);
+    doc = NULL;
+
+    while(!done)
+    {
+        yyjson_doc *response = NULL;
+        yyjson_val *response_root = NULL;
+        const char *type = NULL;
+
+        if(!adbc_recv_json(fd, &response))
+        {
+            ADBC_ERROR("failed to receive connect response");
+            ADBC_INFO("reason: server disconnected or JSON read failed");
+            yyjson_doc_free(response);
+            goto cleanup;
+        }
+
+        if(!adbc__get_packet_type(response, &response_root, &type))
+        {
+            yyjson_doc_free(response);
+            goto cleanup;
+        }
+
+        if(strcmp(type, "log") == 0)
+            adbc_log_handle_server(response_root);
+        else if(strcmp(type, "result") == 0)
+        {
+            done = true;
+            if(adbc__check_result_error(response_root))
+                break;
+
+            ADBC_INFO("connected to \"%s\" successfully", options->serial);
+        }
+        else
+            ADBC_ERROR("unhandled server packet type: %s", type);
+
+        yyjson_doc_free(response);
+    }
+
+cleanup:
+    yyjson_mut_doc_free(doc);
+    adbc__close_socket(&fd);
+}
+
+void push_cmd(void *data)
+{
+    adbc_cmd_options_t *options = data;
+    int fd = -1;
+    yyjson_mut_doc *doc = NULL;
+    yyjson_mut_val *root = NULL;
+    bool done = false;
+
+    fd = adbc__connect_server();
+    if(fd < 0)
+        goto cleanup;
+
+    doc = yyjson_mut_doc_new(NULL);
+    if(!doc)
+    {
+        ADBC_ERROR("failed to allocate push command");
+        ADBC_INFO("reason: out of memory");
+        goto cleanup;
+    }
+
+    root = yyjson_mut_obj(doc);
+    if(!root)
+    {
+        ADBC_ERROR("failed to create push command");
+        ADBC_INFO("reason: out of memory");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_set_root(doc, root);
+    if(!yyjson_mut_obj_add_str(doc, root, "type", "cmd") ||
+       !yyjson_mut_obj_add_str(doc, root, "cmd", "push") ||
+       !yyjson_mut_obj_add_str(doc, root, "local_path", 
+           options->local_path) ||
+       !yyjson_mut_obj_add_str(doc, root, "remote_path", 
+           options->remote_path))
+    {
+        ADBC_ERROR("failed to build pusg command");
         ADBC_INFO("reason: JSON allocation failed");
         goto cleanup;
     }

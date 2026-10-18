@@ -18,12 +18,9 @@ adb_error_t adb__sync_proto_open(
         return ADB_ERR_PARAM;
 
     memset(sync, 0, sizeof(*sync));
-
     sync->conn = conn;
-    sync->delayed_ack = 
-        adb__has_feature(conn, ADB__FEATURE_DELAYED_ACK) &&
-        adb__feature_support(ADB__FEATURE_DELAYED_ACK);
-    sync->local_id = 1; /* should use a counter inside conn */
+    sync->delayed_ack = adb__conn_support(conn, ADB__FEATURE_DELAYED_ACK); 
+    sync->local_id = adb__conn_next_id(conn);
     // sync->send_ready = false;
 
     if(sync->delayed_ack)
@@ -191,7 +188,7 @@ adb_error_t adb__sync_proto_read(
     return adb__sync_process_pkt(sync);
 }
 
-static adb_error_t adb__sync_read_timeout(
+adb_error_t adb__sync_proto_read_timeout(
         adb__sync_t *sync,
         const uint32_t timeout_ms)
 {
@@ -199,20 +196,17 @@ static adb_error_t adb__sync_read_timeout(
     if(!sync || !sync->opened)
         return ADB_ERR_PARAM;
 
-    adb__free(sync->pkt_payload);
-    sync->pkt_payload = NULL;
-
-    res = adb__packet_read_timeout(
-            sync->conn,
+    res = adb__pktreader_read(
             &sync->pkt_reader,
+            sync->conn,
             timeout_ms);
     if(res != ADB_ERR_OK)
         return res;
-
+   
     adb__free(sync->pkt_payload);
     sync->pkt = sync->pkt_reader.pkt;
     sync->pkt_payload = sync->pkt_reader.payload;
-    sync->pkt_reader = (adb__packet_reader_t){0};
+    adb__pktreader_reset(&sync->pkt_reader);
 
     return adb__sync_process_pkt(sync);
 }
@@ -232,7 +226,7 @@ adb_error_t adb__sync_proto_handle_okay(
         if(!adb__packet_check_size(&sync->pkt, sizeof(ack_bytes)))
             return ADB_ERR_PROTOCOL;
 
-        memcpy(&ack_bytes, &sync->pkt_payload, sizeof(ack_bytes));
+        memcpy(&ack_bytes, sync->pkt_payload, sizeof(ack_bytes));
         sync->our_asb += ack_bytes;
     } else {
         if(!adb__packet_check_size(&sync->pkt, 0))
@@ -301,7 +295,7 @@ adb_error_t adb__sync_proto_check_ack(
     adb_error_t res = ADB_ERR_OK;
 
     /* tls (mbedtls) have no timeout=0, cuz it means block indefinitely */
-    res = adb__sync_read_timeout(sync, 1);
+    res = adb__sync_proto_read_timeout(sync, 5);
     if(res == ADB_ERR_OK)
     {
         if(!adb__packet_check_cmd(&sync->pkt, ADB__CMD_OKAY))
@@ -333,6 +327,8 @@ void adb__sync_proto_close(
 
     if(sync->opened)
     {
+        adb__pktreader_destroy(sync->conn, &sync->pkt_reader);
+
         sync->pkt.command = ADB__CMD_CLSE;
         sync->pkt.arg0 = sync->local_id;
         sync->pkt.arg1 = sync->remote_id;
@@ -344,7 +340,6 @@ void adb__sync_proto_close(
                 NULL);
     }
 
-    adb__packet_reader_reset(&sync->pkt_reader);
     adb__free(sync->pkt_payload);
     *sync = (adb__sync_t){0};
 }

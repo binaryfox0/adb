@@ -58,12 +58,12 @@ adb__tls_t *adb__conn_get_tls(
 adb_ctx_t *adb__conn_get_ctx(
         adb_conn_t *conn);
 
-bool adb__has_feature(
+bool adb__conn_support(
         adb_conn_t *conn,
         const char *feature);
 
-bool adb__feature_support(
-        const char *feature);
+uint32_t adb__conn_next_id(
+        adb_conn_t *conn);
 
 
 #endif

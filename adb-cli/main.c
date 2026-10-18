@@ -35,6 +35,19 @@ int main(int argc, char **argv)
                 "Endpoint of the target device (host:port)"),
         aparse_arg_end_marker
     };
+    
+    aparse_arg push_args[] =
+    {
+        aparse_arg_string(
+                "local_path", 
+                NULL, 0, 
+                "Path to source file on the host"),
+        aparse_arg_string(
+                "remote_path", 
+                NULL, 0, 
+                "Path to destination file on the device"),
+        aparse_arg_end_marker
+    };
 
     aparse_arg commands[] =
     {
@@ -61,6 +74,10 @@ int main(int argc, char **argv)
                 &options, sizeof(options), 
                 "Connect to a device via TCP/IP", 
                 adbc_cmd_options_t, endpoint),
+        aparse_arg_subparser("push", push_args, push_cmd, 
+                &options, sizeof(options), 
+                "Copy local files/directories to device", 
+                adbc_cmd_options_t, local_path, remote_path),
         aparse_arg_end_marker
     };
     aparse_arg main_args[] =
