@@ -71,7 +71,32 @@ function(target_add_asan target)
     endif()
 endfunction()
 
-find_package(MbedTLS REQUIRED)
+
+include(FetchContent)
+
+find_package(MbedTLS 4.2.0 CONFIG QUIET)
+
+if(MbedTLS_FOUND)
+    message(STATUS "System MbedTLS version ${MbedTLS_VERSION} was found")
+else()
+    message(STATUS "MbedTLS 4.2.0 not found; fetching it")
+
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        mbedtls
+        GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
+        GIT_TAG        v4.2.0
+        GIT_SHALLOW    TRUE
+    )
+
+    FetchContent_MakeAvailable(mbedtls)
+
+    add_library(MbedTLS::mbedtls ALIAS mbedtls)
+    add_library(MbedTLS::mbedx509 ALIAS mbedx509)
+    add_library(MbedTLS::tfpsacrypto ALIAS tfpsacrypto)
+endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(libusb libusb-1.0 REQUIRED IMPORTED_TARGET)
