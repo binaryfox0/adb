@@ -3,8 +3,6 @@ project(spake2)
 
 option(SPAKE2_BUILD_TESTS "Build spake2 tests" OFF)
 
-find_package(MbedTLS REQUIRED)
-
 add_library(spake2
     src/spake2_fe.c
     src/spake2_ge.c
