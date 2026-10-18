@@ -1,7 +1,7 @@
 #include "adb_packet.h"
 
 #include <stdlib.h>
-
+#include <string.h>
 
 #include "adb_conn_priv.h"
 #include "adb_log_priv.h"

@@ -168,10 +168,7 @@ static adbc__server_error_t adbc__cmd_connect(
     adbc__server_error_t error = NULL;
     const char *serial = NULL;
     const char *key_path = NULL;
-    const char *home_dir = NULL;
-    char key_path_buffer[4096] = {0};
     char host[ADBC_IP_LENGTH_MAX] = {0};
-    int path_length = 0;
     uint16_t port = 0U;
     adb_key_t *key = NULL;
     adb_error_t res = ADB_ERR_OK;

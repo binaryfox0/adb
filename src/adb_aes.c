@@ -13,25 +13,39 @@ adb_error_t adb__aes_init(
     static const uint8_t info[] = "adb pairing_auth aes-128-gcm key";
 
     psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_key_attributes_t secret_attributes = PSA_KEY_ATTRIBUTES_INIT;
     psa_key_derivation_operation_t operation = PSA_KEY_DERIVATION_OPERATION_INIT;
+    psa_key_id_t secret_key = PSA_KEY_ID_NULL;
     psa_status_t status = PSA_SUCCESS;
 
-    if (!aes || !key_material || key_material_len == 0U)
+    if (!aes || !key_material || key_material_len == 0U ||
+        key_material_len > SIZE_MAX / 8U)
         return ADB_ERR_PARAM;
 
     *aes = (adb__aes_t){0};
 
     status = psa_crypto_init();
     if (status != PSA_SUCCESS)
-        return ADB_ERR_CRYPTO;
+        goto cleanup;
 
-    status = psa_key_derivation_setup(&operation, PSA_ALG_HKDF(PSA_ALG_SHA_256));
+    status = psa_key_derivation_setup(
+            &operation, PSA_ALG_HKDF(PSA_ALG_SHA_256));
     if (status != PSA_SUCCESS)
         goto cleanup;
 
-    status = psa_key_derivation_input_bytes(
-            &operation, PSA_KEY_DERIVATION_INPUT_SECRET,
-            key_material, key_material_len);
+    psa_set_key_type(&secret_attributes, PSA_KEY_TYPE_DERIVE);
+    psa_set_key_bits(&secret_attributes, key_material_len * 8U);
+    psa_set_key_usage_flags(&secret_attributes, PSA_KEY_USAGE_DERIVE);
+    psa_set_key_algorithm(&secret_attributes,
+            PSA_ALG_HKDF(PSA_ALG_SHA_256));
+
+    status = psa_import_key(&secret_attributes, key_material,
+            key_material_len, &secret_key);
+    if (status != PSA_SUCCESS)
+        goto cleanup;
+
+    status = psa_key_derivation_input_key(
+            &operation, PSA_KEY_DERIVATION_INPUT_SECRET, secret_key);
     if (status != PSA_SUCCESS)
         goto cleanup;
 
@@ -53,6 +67,10 @@ adb_error_t adb__aes_init(
 cleanup:
     psa_key_derivation_abort(&operation);
     psa_reset_key_attributes(&attributes);
+    psa_reset_key_attributes(&secret_attributes);
+
+    if (secret_key != PSA_KEY_ID_NULL)
+        psa_destroy_key(secret_key);
 
     if (status != PSA_SUCCESS)
     {

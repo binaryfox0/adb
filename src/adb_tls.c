@@ -296,13 +296,17 @@ adb_error_t adb__tls_read(
         if(tls->bio_error != ADB_ERR_OK)
             return tls->bio_error;
 
-        adb__log_err_mbedtls(res, "TLS read failed");
+        if(res == MBEDTLS_ERR_SSL_WANT_READ ||
+            res == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+            continue;
 
         if(res == 0 ||
            res == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY ||
            res == MBEDTLS_ERR_SSL_CONN_EOF ||
            res == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
             return ADB_ERR_DISCONNECTED;
+
+        adb__log_err_mbedtls(res, "TLS read failed");
 
         return ADB_ERR_IO;
     }
@@ -357,14 +361,20 @@ adb_error_t adb__tls_read_timeout(
             continue;
         }
 
+        if(ret == MBEDTLS_ERR_SSL_WANT_READ ||
+            ret == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+            continue;
+
+        if(ret == MBEDTLS_ERR_SSL_TIMEOUT)
+            return ADB_ERR_TIMEOUT;
+
         if(ret == 0 ||
            ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY ||
            ret == MBEDTLS_ERR_SSL_CONN_EOF ||
            ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
             return ADB_ERR_DISCONNECTED;
 
-        if(ret == MBEDTLS_ERR_SSL_TIMEOUT)
-            return ADB_ERR_TIMEOUT;
+        
 
         return ADB_ERR_IO;
     }
@@ -404,14 +414,17 @@ adb_error_t adb__tls_write(
             adb__log_err_adb(tls->bio_error, "TLS write failed");
             return tls->bio_error;
         }
-        
-        adb__log_err_mbedtls(ret, "TLS write failed");
+
+        if(ret == MBEDTLS_ERR_SSL_WANT_WRITE)
+            continue;
 
         if(ret == 0 ||
            ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY ||
            ret == MBEDTLS_ERR_SSL_CONN_EOF ||
            ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
             return ADB_ERR_DISCONNECTED;
+        
+        adb__log_err_mbedtls(ret, "TLS write failed");
 
         return ADB_ERR_IO;
     }
