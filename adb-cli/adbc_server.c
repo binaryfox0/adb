@@ -128,7 +128,7 @@ static adbc__server_error_t adbc__cmd_devices(
                 (serial = adb_wired_info_serial(wired[i])) == NULL)
             return "failed to get wired device serial";
 
-        if(!yyjson_mut_arr_add_str(response_doc, arr, serial))
+        if(!yyjson_mut_arr_add_strcpy(response_doc, arr, serial))
             return "out of memory while adding wired device";
     }
 
@@ -148,7 +148,7 @@ static adbc__server_error_t adbc__cmd_devices(
             return "failed to get wireless device endpoint";
 
         buffer[sizeof(buffer) - 1U] = '\0';
-        if(!yyjson_mut_arr_add_str(response_doc, arr, buffer))
+        if(!yyjson_mut_arr_add_strcpy(response_doc, arr, buffer))
             return "out of memory while adding wireless device";
     }
 

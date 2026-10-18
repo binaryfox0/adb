@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <mbedtls/sha512.h>
+#include <psa/crypto.h>
 
 #include "spake2_ctime.h"
 #include "spake2_sc.h"
@@ -318,6 +318,7 @@ int spake2_generate_msg(
     spake2__sc_t private_reduced = {0};
 
     spake2__sc_wide_t password_tmp = {0};
+    size_t hash_len = 0;
     spake2__sc_t password_reduced = {0};
 
     spake2__u256_t password_scalar = {0};
@@ -341,8 +342,11 @@ int spake2_generate_msg(
     ctx->private_key = private_reduced;
 
     spake2__ge_scalarmult_base(&P, &ctx->private_key);
-    mbedtls_sha512(password, 
-            password_len, password_tmp.v, 0);
+    psa_hash_compute(PSA_ALG_SHA_512, password, password_len, 
+            password_tmp.v, sizeof(password_tmp.v), &hash_len);
+    if(hash_len != sizeof(password_tmp.v))
+        return 0;
+
     memcpy(ctx->password_hash, &password_tmp, SPAKE2__SHA512_DIGEST_LENGTH);
     spake2__sc_reduce(&password_reduced, &password_tmp);
     memcpy(&password_scalar, &password_reduced, sizeof(password_scalar));
@@ -395,7 +399,7 @@ int spake2_generate_msg(
 #define SPAKE2__MIN(a, b) ((a) < (b) ? (a) : (b))
 
 static void spake2__update(
-        mbedtls_sha512_context *sha, 
+        psa_hash_operation_t *sha, 
         const uint8_t *data,
         const size_t len) 
 {
@@ -404,12 +408,12 @@ static void spake2__update(
 
     for(int i = 0; i < 8; i++) 
     {
-      len_le[i] = l & 0xff;
-      l >>= 8;
+        len_le[i] = l & 0xff;
+        l >>= 8;
     }
 
-    mbedtls_sha512_update(sha, len_le, sizeof(len_le));
-    mbedtls_sha512_update(sha, data, len);
+    psa_hash_update(sha, len_le, sizeof(len_le));
+    psa_hash_update(sha, data, len);
 }
 
 int spake2_process_msg(
@@ -427,8 +431,9 @@ int spake2_process_msg(
     spake2__ge_p3_t Q_ext = {0};
     spake2__ge_p2_t dh_shared = {0};
     uint8_t dh_shared_encoded[32] = {0};
-    mbedtls_sha512_context sha = {0};
+    psa_hash_operation_t sha = {0};
     uint8_t key[SPAKE2__SHA512_DIGEST_LENGTH] = {0};
+    size_t hash_len = 0;
     if(
             !ctx || 
             ctx->state != SPAKE2_STATE_MSG_GENERATED ||
@@ -460,8 +465,7 @@ int spake2_process_msg(
 
     spake2__ge_to_bytes(dh_shared_encoded, &dh_shared);
 
-    mbedtls_sha512_init(&sha);
-    mbedtls_sha512_starts(&sha, 0);
+    psa_hash_setup(&sha, PSA_ALG_SHA_512);
     if (ctx->my_role == SPAKE2_ROLE_ALICE) 
     {
         spake2__update(&sha, ctx->my_name, ctx->my_name_len);
@@ -479,8 +483,9 @@ int spake2_process_msg(
     spake2__update(&sha, ctx->password_hash,
             sizeof(ctx->password_hash));
 
-    // problem right here, not produce the same key
-    mbedtls_sha512_finish(&sha, key);
+    psa_hash_finish(&sha, key, sizeof(key), &hash_len);
+    if(hash_len != sizeof(key))
+        return 0;
 
     size_t to_copy =  SPAKE2__MIN(max_out_key_len, sizeof(key));
     memcpy(out_key, key, to_copy);

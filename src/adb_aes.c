@@ -1,11 +1,10 @@
 #include "adb_aes.h"
 
 #include <string.h>
-#include <mbedtls/hkdf.h>
-#include "adb_log_priv.h"
 
-#define ADB__AES_KEY_LENGTH 16
-#define ADB__GCM_NONCE_LENGTH 12
+#define ADB__AES_KEY_LENGTH 16U
+#define ADB__GCM_NONCE_LENGTH 12U
+
 adb_error_t adb__aes_init(
         adb__aes_t *aes,
         const uint8_t *key_material,
@@ -13,40 +12,53 @@ adb_error_t adb__aes_init(
 {
     static const uint8_t info[] = "adb pairing_auth aes-128-gcm key";
 
-    int err = 0;
-    uint8_t key[ADB__AES_KEY_LENGTH] = {0};
-    if(!aes || !key_material || key_material_len == 0)
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_key_derivation_operation_t operation = PSA_KEY_DERIVATION_OPERATION_INIT;
+    psa_status_t status = PSA_SUCCESS;
+
+    if (!aes || !key_material || key_material_len == 0U)
         return ADB_ERR_PARAM;
 
     *aes = (adb__aes_t){0};
 
-    err = mbedtls_hkdf(
-            mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
-            NULL,
-            0,
-            key_material,
-            key_material_len,
-            info,
-            sizeof(info) - 1,
-            key,
-            sizeof(key));
-    if(err != 0)
-    {
-        adb__log_err_mbedtls(err, 
-                "failed to derieve AES-128 key from key material");
+    status = psa_crypto_init();
+    if (status != PSA_SUCCESS)
         return ADB_ERR_CRYPTO;
-    }
 
-    mbedtls_gcm_init(&aes->gcm);
-    err = mbedtls_gcm_setkey(
-            &aes->gcm, 
-            MBEDTLS_CIPHER_ID_AES, 
-            key, 
-            128);
-    if(err != 0)
+    status = psa_key_derivation_setup(&operation, PSA_ALG_HKDF(PSA_ALG_SHA_256));
+    if (status != PSA_SUCCESS)
+        goto cleanup;
+
+    status = psa_key_derivation_input_bytes(
+            &operation, PSA_KEY_DERIVATION_INPUT_SECRET,
+            key_material, key_material_len);
+    if (status != PSA_SUCCESS)
+        goto cleanup;
+
+    status = psa_key_derivation_input_bytes(
+            &operation, PSA_KEY_DERIVATION_INPUT_INFO,
+            info, sizeof(info) - 1U);
+    if (status != PSA_SUCCESS)
+        goto cleanup;
+
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attributes, ADB__AES_KEY_LENGTH * 8U);
+    psa_set_key_usage_flags(&attributes,
+            PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+    psa_set_key_algorithm(&attributes, PSA_ALG_GCM);
+
+    status = psa_key_derivation_output_key(
+            &attributes, &operation, &aes->key_id);
+
+cleanup:
+    psa_key_derivation_abort(&operation);
+    psa_reset_key_attributes(&attributes);
+
+    if (status != PSA_SUCCESS)
     {
-        adb__log_err_mbedtls(err, "failed to set key to GCM context");
-        mbedtls_gcm_free(&aes->gcm);
+        if (aes->key_id != PSA_KEY_ID_NULL)
+            psa_destroy_key(aes->key_id);
+        *aes = (adb__aes_t){0};
         return ADB_ERR_CRYPTO;
     }
 
@@ -60,33 +72,34 @@ adb_error_t adb__aes_encrypt(
         void *out,
         const size_t out_len)
 {
-    int err = 0;
     uint8_t nonce[ADB__GCM_NONCE_LENGTH] = {0};
-    if(!aes || !in || !out)
+    size_t output_length = 0U;
+    psa_status_t status = PSA_SUCCESS;
+
+    if (!aes || !in || !out)
         return ADB_ERR_PARAM;
-    
-    if(out_len < ADB__AES_ENCYPTED_SIZE(in_len))
+
+    if (in_len > SIZE_MAX - ADB__GCM_TAG_LENGTH ||
+            out_len < ADB__AES_ENCRYPTED_SIZE(in_len))
         return ADB_ERR_TOO_SMALL;
 
-    memcpy(nonce, &aes->enc_seq, sizeof(aes->enc_seq));
-    err = mbedtls_gcm_crypt_and_tag(
-            &aes->gcm,
-            MBEDTLS_GCM_ENCRYPT,
-            in_len,
-            nonce,
-            sizeof(nonce),
-            NULL,
-            0,
-            in,
-            out,
-            ADB__GCM_TAG_LENGTH,
-            (uint8_t*)out + in_len);
-    if(err != 0)
-    {
-        adb__log_err_mbedtls(err, "failed to encrypt data");
+    if (aes->enc_seq == UINT64_MAX)
         return ADB_ERR_CRYPTO;
-    }
-            
+
+    memcpy(nonce, &aes->enc_seq, sizeof(aes->enc_seq));
+
+    status = psa_aead_encrypt(
+            aes->key_id, PSA_ALG_GCM,
+            nonce, sizeof(nonce),
+            NULL, 0U,
+            in, in_len,
+            out, out_len,
+            &output_length);
+
+    if (status != PSA_SUCCESS ||
+            output_length != ADB__AES_ENCRYPTED_SIZE(in_len))
+        return ADB_ERR_CRYPTO;
+
     aes->enc_seq++;
     return ADB_ERR_OK;
 }
@@ -98,43 +111,45 @@ adb_error_t adb__aes_decrypt(
         void *out,
         const size_t out_len)
 {
-    int err = 0;
-    size_t ciphertext_len = 0;
     uint8_t nonce[ADB__GCM_NONCE_LENGTH] = {0};
+    size_t output_length = 0U;
+    size_t ciphertext_length = 0U;
+    psa_status_t status = PSA_SUCCESS;
 
-    if(!aes || !in || in_len < ADB__GCM_TAG_LENGTH || !out)
+    if (!aes || !in || in_len < ADB__GCM_TAG_LENGTH || !out)
         return ADB_ERR_PARAM;
-    if(out_len < in_len - ADB__GCM_TAG_LENGTH)
+
+    ciphertext_length = in_len - ADB__GCM_TAG_LENGTH;
+    if (out_len < ciphertext_length)
         return ADB_ERR_TOO_SMALL;
 
-    ciphertext_len = in_len - ADB__GCM_TAG_LENGTH;
-    memcpy(nonce, &aes->dec_seq, sizeof(aes->dec_seq));
-    err = mbedtls_gcm_auth_decrypt(
-            &aes->gcm,
-            ciphertext_len,
-            nonce,
-            sizeof(nonce),
-            NULL,
-            0,
-            (const uint8_t*)in + ciphertext_len,
-            ADB__GCM_TAG_LENGTH,
-            in,
-            out);
-    if(err != 0)
-    {
-        adb__log_err_mbedtls(err, "failed to decrypt data");
+    if (aes->dec_seq == UINT64_MAX)
         return ADB_ERR_CRYPTO;
-    }
+
+    memcpy(nonce, &aes->dec_seq, sizeof(aes->dec_seq));
+
+    status = psa_aead_decrypt(
+            aes->key_id, PSA_ALG_GCM,
+            nonce, sizeof(nonce),
+            NULL, 0U,
+            in, in_len,
+            out, out_len,
+            &output_length);
+
+    if (status != PSA_SUCCESS || output_length != ciphertext_length)
+        return ADB_ERR_CRYPTO;
 
     aes->dec_seq++;
     return ADB_ERR_OK;
 }
 
-void adb__aes_destroy(
-        adb__aes_t *aes)
+void adb__aes_destroy(adb__aes_t *aes)
 {
-    if(!aes)
+    if (!aes)
         return;
-    mbedtls_gcm_free(&aes->gcm);
+
+    if (aes->key_id != PSA_KEY_ID_NULL)
+        psa_destroy_key(aes->key_id);
+
     *aes = (adb__aes_t){0};
 }

@@ -1,15 +1,16 @@
 #ifndef ADB_AES_H
 #define ADB_AES_H
 
-#include <mbedtls/gcm.h>
+#include <psa/crypto.h>
+#include <stdint.h>
 #include <adb/adb_error.h>
 
-#define ADB__GCM_TAG_LENGTH 16
-#define ADB__AES_ENCYPTED_SIZE(x) ((x) + ADB__GCM_TAG_LENGTH)
+#define ADB__GCM_TAG_LENGTH 16U
+#define ADB__AES_ENCRYPTED_SIZE(x) ((x) + ADB__GCM_TAG_LENGTH)
 
 typedef struct
 {
-    mbedtls_gcm_context gcm;
+    psa_key_id_t key_id;
     uint64_t enc_seq;
     uint64_t dec_seq;
 } adb__aes_t;
@@ -33,7 +34,6 @@ adb_error_t adb__aes_decrypt(
         void *out,
         const size_t out_len);
 
-void adb__aes_destroy(
-        adb__aes_t *aes);
+void adb__aes_destroy(adb__aes_t *aes);
 
 #endif

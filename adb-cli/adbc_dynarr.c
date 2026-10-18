@@ -2,6 +2,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <limits.h>
 
 bool adbc_dynarr_init(
         adbc_dynarr_t *a, 

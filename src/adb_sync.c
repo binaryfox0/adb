@@ -1,6 +1,7 @@
 #include <adb/adb_sync.h>
 
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
 

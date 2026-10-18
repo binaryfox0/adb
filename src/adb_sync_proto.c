@@ -123,7 +123,7 @@ adb_error_t adb__sync_proto_write(
         return res;
 
     if(sync->delayed_ack)
-        sync->our_asb -= (int64_t)payload_size;
+        sync->our_asb -= (int32_t)payload_size;
     else
         sync->send_ready = false;
 
@@ -162,7 +162,7 @@ static adb_error_t adb__sync_process_pkt(
          * The peer has consumed this much of its send ASB.
          * We replenish it later through A_OKAY.
          */
-        sync->their_asb -= (int64_t)sync->pkt.payload_size;
+        sync->their_asb -= (int32_t)sync->pkt.payload_size;
     }
 
     return ADB_ERR_OK;
@@ -327,17 +327,17 @@ void adb__sync_proto_close(
 
     if(sync->opened)
     {
-        adb__pktreader_destroy(sync->conn, &sync->pkt_reader);
-
+        adb_error_t res = ADB_ERR_OK;
         sync->pkt.command = ADB__CMD_CLSE;
         sync->pkt.arg0 = sync->local_id;
         sync->pkt.arg1 = sync->remote_id;
         sync->pkt.payload_size = 0;
 
-        (void)adb__packet_write(
+        res = adb__packet_write(
                 sync->conn,
                 &sync->pkt,
                 NULL);
+        (void)res;
     }
 
     adb__free(sync->pkt_payload);

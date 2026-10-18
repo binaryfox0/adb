@@ -2,8 +2,7 @@
 #define ADB_CTX_PRIV_H
 
 #include <stddef.h>
-#include <mbedtls/entropy.h>
-#include <mbedtls/ctr_drbg.h>
+#include <psa/crypto.h>
 #include "adb_dynarr.h"
 
 typedef struct libusb_context libusb_context;
@@ -28,9 +27,6 @@ typedef struct adb_ctx
     size_t pair_winfo_count;
     adb__dynarr_t dev_winfos;
     size_t dev_winfo_count;
-
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context drbg;
 } adb_ctx_t;
 
 

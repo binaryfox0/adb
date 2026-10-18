@@ -1,6 +1,9 @@
 #include "adb_dynarr.h"
 
+#include <stdint.h>
 #include <string.h>
+#include <limits.h>
+
 #include "adb_alloc_priv.h"
 
 adb_error_t adb__dynarr_init(

@@ -4,10 +4,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-
-#include <mbedtls/ssl.h>
-#include <mbedtls/ctr_drbg.h>
-
 #include <adb/adb_error.h>
 
 #define ADB__TLS_EXPORTED_KEY_LENGTH 64

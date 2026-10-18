@@ -11,6 +11,7 @@ adb_error_t adb_ctx_create(
         adb_ctx_t **ctx)
 {
     adb_ctx_t *tmp = NULL;
+    psa_status_t status = PSA_SUCCESS;
     int err = 0;
     if(!ctx)
         return ADB_ERR_PARAM;
@@ -20,18 +21,12 @@ adb_error_t adb_ctx_create(
     if(!tmp)
         return ADB_ERR_NO_MEM;
 
-    mbedtls_entropy_init(&tmp->entropy);
-    mbedtls_ctr_drbg_init(&tmp->drbg);
 
-    err = mbedtls_ctr_drbg_seed(
-            &tmp->drbg,
-            mbedtls_entropy_func,
-            &tmp->entropy,
-            NULL,
-            0);
-    if(err != 0)
+    status = psa_crypto_init();
+    if(status != PSA_SUCCESS)
     {
-        adb__log_err_mbedtls(err, "failed to create random generator");
+        ADB__ERROR("failed to create random generator");
+        ADB__INFO("tfpsacrypto status: %d", (int)status);
         adb_ctx_destroy(tmp);
         return ADB_ERR_CRYPTO;
     }
@@ -76,9 +71,6 @@ void adb_ctx_destroy(
     adb_wireless_info_t *wireless_info = NULL;
     if(!ctx)
         return;
-    
-    mbedtls_entropy_free(&ctx->entropy);
-    mbedtls_ctr_drbg_free(&ctx->drbg);
 
     adb__dynarr_foreach(&ctx->wired_infos, adb_wired_info_t*, wired_info)
         adb__wired_info_destroy(wired_info);

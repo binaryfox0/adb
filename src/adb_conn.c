@@ -10,8 +10,7 @@
 #include <libusb.h>
 #include <mbedtls/error.h>
 #include <mbedtls/ssl.h>
-#include <mbedtls/ctr_drbg.h>
-#include <mbedtls/entropy.h>
+#include <psa/crypto.h>
 
 #include "adb_utils.h"
 #include "adb_log_priv.h"

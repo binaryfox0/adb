@@ -152,11 +152,6 @@ adb_error_t adb__tls_create(
         adb__log_err_mbedtls(err, "failed to configure TLS");
         goto fail;
     }
-
-    mbedtls_ssl_conf_rng(
-            &tmp->conf,
-            mbedtls_ctr_drbg_random,
-            &ctx->drbg);
     
     mbedtls_ssl_conf_min_tls_version(
             &tmp->conf,

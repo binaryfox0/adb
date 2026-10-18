@@ -171,7 +171,7 @@ target_link_libraries(adb PRIVATE
     $<$<NOT:$<BOOL:${ADB_NO_USB}>>:PkgConfig::libusb>
     MbedTLS::mbedtls
     MbedTLS::mbedx509
-    MbedTLS::mbedcrypto
+    MbedTLS::tfpsacrypto
     spake2
     mdns
     lz4

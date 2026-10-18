@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -169,8 +170,7 @@ static adb_error_t adb__tcp_read_timeout(
             return ADB_ERR_TIMEOUT;
 
         remaining = deadline - now;
-        poll_res = poll(&pfd, 1, 
-                ADB__MIN((int)remaining, INT_MAX));
+        poll_res = poll(&pfd, 1, ADB__MIN((int)remaining, INT_MAX));
         if(poll_res < 0)
         {
             if(errno == EINTR)
