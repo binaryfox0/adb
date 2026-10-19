@@ -74,21 +74,14 @@ static const char *adb__peer_info_type_strings[ADB__PEER_INFO_COUNT] =
 static adb_error_t adb__random_bytes(void *out, const size_t size)
 {
     psa_status_t status = PSA_SUCCESS;
-
     if (!out || size == 0U)
         return ADB_ERR_PARAM;
-
-    status = psa_crypto_init();
-    if (status != PSA_SUCCESS)
-    {
-        ADB__ERROR("PSA crypto initialization failed (status %d)", (int)status);
-        return ADB_ERR_CRYPTO;
-    }
 
     status = psa_generate_random(out, size);
     if (status != PSA_SUCCESS)
     {
-        ADB__ERROR("PSA random generation failed (status %d)", (int)status);
+        ADB__ERROR("random generation failed");
+        ADB__INFO("reason: status %d", (int)status);
         return ADB_ERR_CRYPTO;
     }
 
@@ -384,7 +377,7 @@ static adb_error_t adb__exchange_info(
         goto cleanup;
 
     my_info.type = ADB__PEER_INFO_PUBLIC_KEY;
-    ret = adb_key_generate_pubkey(key, my_info.data, sizeof(my_info.data), NULL);
+    ret = adb_key_generate_pubkey(key, (char*)my_info.data, sizeof(my_info.data), NULL);
     if (ret != ADB_ERR_OK)
         goto cleanup;
 

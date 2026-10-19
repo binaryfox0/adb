@@ -18,6 +18,7 @@
 #include "adb_alloc_priv.h"
 #include "adb_query_priv.h"
 #include "adb_packet.h"
+#include <adb/adb_key.h>
 #include "adb_key_priv.h"
 #include "adb_transport.h"
 #include "adb_tls.h"
@@ -376,40 +377,38 @@ fail:
     ADB__ERROR("failed to parse device banner");
     return false;
 }
-
 adb_error_t adb_handshake(
-        adb_conn_t *conn, 
+        adb_conn_t *conn,
         adb_key_t *key)
 {
     adb_error_t ret = ADB_ERR_OK;
-    static const char conn_str[] = 
+    static const char conn_str[] =
         "host::features=" ADB__SUPPORTED_FEATURES;
     adb__packet_t pkt = {0};
     uint8_t *payload = NULL;
-    
+
     if (!conn || !key)
         return ADB_ERR_PARAM;
-    
+
     pkt.command = ADB__CMD_CNXN;
     pkt.arg0 = ADB__PACKET_MAX_SUPPORTED_VER;
     pkt.arg1 = ADB__PACKET_MAX_PAYLOAD_SIZE;
     pkt.payload_size = sizeof(conn_str) - 1;
 
-
-    if(
-            (ret = adb__packet_write(
-                conn, &pkt, conn_str)) != ADB_ERR_OK ||
-            (ret = adb__packet_read(
-                conn, &pkt, (void **)&payload) != ADB_ERR_OK))
+    ret = adb__packet_write(conn, &pkt, conn_str);
+    if (ret != ADB_ERR_OK)
         return ret;
 
-    if (pkt.command == ADB__CMD_STLS) 
-    {
+    ret = adb__packet_read(conn, &pkt, (void **)&payload);
+    if (ret != ADB_ERR_OK)
+        goto fail;
+
+    if (pkt.command == ADB__CMD_STLS) {
         pkt.command = ADB__CMD_STLS;
         pkt.arg0 = ADB__STLS_VERSION;
         pkt.arg1 = 0;
         pkt.payload_size = 0;
-    
+
         ret = adb__packet_write(conn, &pkt, NULL);
         if (ret != ADB_ERR_OK)
             goto fail;
@@ -418,40 +417,73 @@ adb_error_t adb_handshake(
         if (ret != ADB_ERR_OK)
             goto fail;
 
-        adb__free(payload); payload = NULL;
+        adb__free(payload);
+        payload = NULL;
+
         ret = adb__packet_read(conn, &pkt, (void **)&payload);
         if (ret != ADB_ERR_OK)
             goto fail;
-    } else if(pkt.command == ADB__CMD_AUTH) {
-        /*
-         * A valid adb_key_t always has a valid private key object,
-         * so the implementation for ADB__AUTH_PUBLIC_KEY will
-         * always be useless.
-         */
+    } else if (pkt.command == ADB__CMD_AUTH) {
         uint8_t signature[ADB__KEY_SIGNATURE_LENGTH] = {0};
+
+        if (pkt.arg0 != ADB__AUTH_TOKEN) {
+            ret = ADB_ERR_PROTOCOL;
+            goto fail;
+        }
+
+        ret = adb__key_sign(key, conn->ctx, (const char *)payload,
+                pkt.payload_size, signature);
+        if (ret != ADB_ERR_OK)
+            goto fail;
+
         pkt.command = ADB__CMD_AUTH;
         pkt.arg0 = ADB__AUTH_SIGNATURE;
         pkt.arg1 = 0;
-        ret = adb__key_sign(key, conn->ctx, 
-                (const char*)payload, pkt.payload_size, 
-                signature);
-        if(ret != ADB_ERR_OK)
-            goto fail;
         pkt.payload_size = sizeof(signature);
-       
+
         ret = adb__packet_write(conn, &pkt, signature);
         if (ret != ADB_ERR_OK)
             goto fail;
-        
+
+        adb__free(payload);
+        payload = NULL;
+
         ret = adb__packet_read(conn, &pkt, (void **)&payload);
         if (ret != ADB_ERR_OK)
             goto fail;
+
+        if (pkt.command == ADB__CMD_AUTH) {
+            char pubkey[ADB_KEY_PUBLIC_SIZE_MAX] = {0};
+
+            if (pkt.arg0 != ADB__AUTH_TOKEN) {
+                ret = ADB_ERR_PROTOCOL;
+                goto fail;
+            }
+
+            ret = adb_key_generate_pubkey(key, pubkey, sizeof(pubkey), NULL);
+            if (ret != ADB_ERR_OK)
+                goto fail;
+
+            pkt.command = ADB__CMD_AUTH;
+            pkt.arg0 = ADB__AUTH_PUBLIC_KEY;
+            pkt.arg1 = 0;
+            pkt.payload_size = (uint32_t)strlen(pubkey) + 1;
+
+            adb__free(payload);
+            payload = NULL;
+
+            ret = adb__packet_write(conn, &pkt, pubkey);
+            if (ret != ADB_ERR_OK)
+                goto fail;
+
+            ret = adb__packet_read(conn, &pkt, (void **)&payload);
+            if (ret != ADB_ERR_OK)
+                goto fail;
+        }
     }
 
-    if(
-            !adb__packet_check_cmd(&pkt, ADB__CMD_CNXN) ||
-            !adb__parse_banner(conn, payload, pkt.payload_size))
-    {
+    if (!adb__packet_check_cmd(&pkt, ADB__CMD_CNXN) ||
+        !adb__parse_banner(conn, payload, pkt.payload_size)) {
         ret = ADB_ERR_PROTOCOL;
         goto fail;
     }

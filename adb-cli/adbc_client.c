@@ -232,48 +232,78 @@ void kill_server_cmd(void *data)
 
 void devices_cmd(void *data)
 {
-    static const char json[] = "{\"type\":\"cmd\",\"cmd\":\"devices\"}";
+    adbc_cmd_options_t *options = data;
     int fd = -1;
+    yyjson_mut_doc *doc = NULL;
+    yyjson_mut_val *root = NULL;
     bool done = false;
-
-    (void)data;
 
     fd = adbc__connect_server();
     if(fd < 0)
         return;
 
-    if(!adbc_send_json_raw(fd, json))
+    doc = yyjson_mut_doc_new(NULL);
+    if(!doc)
     {
-        ADBC_ERROR("failed to send devices command");
+        ADBC_ERROR("failed to allocate connect command");
+        ADBC_INFO("reason: out of memory");
+        goto cleanup;
+    }
+
+    root = yyjson_mut_obj(doc);
+    if(!root)
+    {
+        ADBC_ERROR("failed to create connect command");
+        ADBC_INFO("reason: out of memory");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_set_root(doc, root);
+    if(!yyjson_mut_obj_add_str(doc, root, "type", "cmd") ||
+       !yyjson_mut_obj_add_str(doc, root, "cmd", "devices") ||
+       !yyjson_mut_obj_add_str(doc, root, "key_path", options->opt_key))
+    {
+        ADBC_ERROR("failed to build connect command");
+        ADBC_INFO("reason: JSON allocation failed");
+        goto cleanup;
+    }
+
+
+    if(!adbc_send_json(fd, doc))
+    {
+        ADBC_ERROR("failed to send connect command");
         ADBC_INFO("reason: JSON send operation failed");
         goto cleanup;
     }
 
+    yyjson_mut_doc_free(doc);
+    doc = NULL;
+
     while(!done)
     {
-        yyjson_doc *doc = NULL;
-        yyjson_val *root = NULL;
+        yyjson_doc *response = NULL;
+        yyjson_val *response_root = NULL;
         const char *type = NULL;
 
-        if(!adbc_recv_json(fd, &doc))
+        if(!adbc_recv_json(fd, &response))
         {
             ADBC_ERROR("failed to receive server response");
             ADBC_INFO("reason: server disconnected or JSON read failed");
-            yyjson_doc_free(doc);
+            yyjson_doc_free(response);
             goto cleanup;
         }
 
-        if(!adbc__get_packet_type(doc, &root, &type))
+        if(!adbc__get_packet_type(response, &response_root, &type))
         {
-            yyjson_doc_free(doc);
+            yyjson_doc_free(response);
             goto cleanup;
         }
 
         if(strcmp(type, "log") == 0)
-            adbc_log_handle_server(root);
+            adbc_log_handle_server(response_root);
         else if(strcmp(type, "result") == 0)
         {
-            yyjson_val *devices = yyjson_obj_get(root, "devices");
+            yyjson_val *devices = yyjson_obj_get(response_root, "devices");
             yyjson_val *item = NULL;
             size_t index = 0U;
             size_t count = 0U;
@@ -282,7 +312,7 @@ void devices_cmd(void *data)
             {
                 ADBC_ERROR("invalid devices response");
                 ADBC_INFO("reason: expected devices to be an array");
-                yyjson_doc_free(doc);
+                yyjson_doc_free(response);
                 goto cleanup;
             }
 
@@ -292,7 +322,7 @@ void devices_cmd(void *data)
                 {
                     ADBC_ERROR("invalid device entry");
                     ADBC_INFO("reason: expected device entry to be a string");
-                    yyjson_doc_free(doc);
+                    yyjson_doc_free(response);
                     goto cleanup;
                 }
                 ADBC_INFO("%s", yyjson_get_str(item));
@@ -303,7 +333,7 @@ void devices_cmd(void *data)
         else
             ADBC_ERROR("unhandled server packet type: %s", type);
 
-        yyjson_doc_free(doc);
+        yyjson_doc_free(response);
     }
 
 cleanup:

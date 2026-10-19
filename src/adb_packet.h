@@ -27,7 +27,7 @@ typedef struct adb_conn adb_conn_t;
 
 typedef enum 
 {
-    ADB__AUTH_TOKEN,
+    ADB__AUTH_TOKEN = 1,
     ADB__AUTH_SIGNATURE,
     ADB__AUTH_PUBLIC_KEY
 } adb__auth_type_t;

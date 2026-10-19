@@ -5,6 +5,11 @@
 #include <stddef.h>
 #include <adb/adb_error.h>
 
+/*
+ * Not gurantee to be the same for different OS
+ */
+#define ADB_KEY_PUBLIC_SIZE_MAX 1214
+
 typedef struct adb_key adb_key_t;
 typedef struct adb_ctx adb_ctx_t;
 
@@ -23,7 +28,7 @@ adb_error_t adb_key_save(
 
 adb_error_t adb_key_generate_pubkey(
         adb_key_t *key,
-        uint8_t *buffer,
+        char *buffer,
         const size_t size,
         size_t *out_size);
 

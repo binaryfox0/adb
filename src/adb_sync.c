@@ -525,7 +525,6 @@ adb_error_t adb_sync_pull(
 
     for(size_t i = 0; i < ADB__ARRSZ(check_orders); i++)
     {
-        /* XXX: dunno it needs to try another if current failed */
         if(adb__conn_support(conn, check_orders[i].feature))
         {
             return adb__pull_v2(conn, remote_path, 
@@ -617,7 +616,7 @@ static adb_error_t adb__send_send_v2(
 
 #define ADB__PUSH_IN_BUFFER_SIZE (256 * 1024)
 
-adb_error_t adb_sync_push(
+static adb_error_t adb__push_v1(
         adb_conn_t *conn,
         const char *remote_path,
         const uint32_t mode,
@@ -626,23 +625,49 @@ adb_error_t adb_sync_push(
         const adb_read_fn read_fn,
         void *userdata)
 {
+    (void)conn;
+    (void)remote_path;
+    (void)mode;
+    (void)modified_time;
+    (void)size;
+    (void)read_fn;
+    (void)userdata;
+
+    return ADB_ERR_UNIMPLEMENTED;
+}
+
+static adb_error_t adb__push_v2(
+        adb_conn_t *conn,
+        const char *remote_path,
+        const uint32_t mode,
+        const uint32_t modified_time,
+        const adb__comp_type_t comp_type,
+        const size_t size,
+        const adb_read_fn read_fn,
+        void *userdata)
+{
+    static uint32_t comp_type_to_flags[ADB__COMP_COUNT] =
+    {
+        [ADB__COMP_NONE] = 0,
+        [ADB__COMP_BROTLI] = ADB__SYNC_FLAG_BROTLI,
+        [ADB__COMP_LZ4] = ADB__SYNC_FLAG_LZ4,
+        [ADB__COMP_ZSTD] = ADB__SYNC_FLAG_ZSTD,
+    };
     adb_error_t res = ADB_ERR_OK;
     adb__sync_t sync = {0};
     adb__comp_t *comp = NULL;
     size_t remaining = 0;
     uint8_t in_buf[ADB__PUSH_IN_BUFFER_SIZE] = {0};
-    if(!conn || !remote_path || !read_fn)
-        return ADB_ERR_PARAM;
-    
+
     res = adb__sync_proto_open(&sync, conn);
     if(res != ADB_ERR_OK)
         return res;
 
-    res = adb__send_send_v2(&sync, remote_path, mode, 0);
+    res = adb__send_send_v2(&sync, remote_path, mode, comp_type_to_flags[comp_type]);
     if(res != ADB_ERR_OK)
         return res;
 
-    res = adb__comp_create(&comp, ADB__COMP_NONE);
+    res = adb__comp_create(&comp, comp_type);
     if(res != ADB_ERR_OK)
         goto cleanup;
 
@@ -791,6 +816,44 @@ cleanup:
     adb__sync_proto_close(&sync);
     return res;
 }
+
+adb_error_t adb_sync_push(
+        adb_conn_t *conn,
+        const char *remote_path,
+        const uint32_t mode,
+        const uint32_t modified_time,
+        const size_t size,
+        const adb_read_fn read_fn,
+        void *userdata)
+{
+    struct {
+        const char *feature;
+        adb__comp_type_t comp_type;
+    } check_orders[ADB__COMP_COUNT] =
+    {
+        { ADB__FEATURE_SENDRECV_V2_ZSTD, ADB__COMP_ZSTD },
+        { ADB__FEATURE_SENDRECV_V2_LZ4, ADB__COMP_LZ4 },
+        { ADB__FEATURE_SENDRECV_V2_BROTLI, ADB__COMP_BROTLI },
+        { ADB__FEATURE_SENDRECV_V2, ADB__COMP_NONE },
+    };
+
+    if(!conn || !remote_path || !read_fn)
+        return ADB_ERR_PARAM;
+    
+    for(size_t i = 0; i < ADB__ARRSZ(check_orders); i++)
+    {
+        if(adb__conn_support(conn, check_orders[i].feature))
+        {
+            return adb__push_v2(conn, remote_path, 
+                    mode, modified_time, check_orders[i].comp_type, 
+                    size, read_fn, userdata);
+        }
+    }
+
+    return adb__push_v1(conn, remote_path, 
+            mode, modified_time, size, read_fn, userdata);
+}
+
 
 static int adb__push_file_read(
         void *userdata,

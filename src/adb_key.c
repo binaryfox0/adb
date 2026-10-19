@@ -583,7 +583,7 @@ cleanup:
 
 adb_error_t adb_key_generate_pubkey(
         adb_key_t *key,
-        uint8_t *buffer,
+        char *buffer,
         const size_t size,
         size_t *out_size)
 {
@@ -623,7 +623,7 @@ adb_error_t adb_key_generate_pubkey(
     if (min_size > size)
         return ADB_ERR_TOO_SMALL;
 
-    err = mbedtls_base64_encode(buffer, size, &encoded_size,
+    err = mbedtls_base64_encode((uint8_t*)buffer, size, &encoded_size,
             (const uint8_t *)&pubkey, ADB__ANDROID_PUBKEY_SIZE);
     if (err != 0)
     {

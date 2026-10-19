@@ -16,6 +16,7 @@
 #include <yyjson.h>
 #include <adb/adb.h>
 
+#include "adb/adb_key.h"
 #include "adbc_utils.h"
 #include "adbc_log.h"
 #include "adbc_io.h"
@@ -91,6 +92,9 @@ static adbc__server_error_t adbc__cmd_devices(
         yyjson_mut_doc *response_doc,
         yyjson_mut_val *response_root)
 {
+    const char *error = NULL;
+    const char *key_path = NULL;
+    adb_key_t *key = NULL;
     adb_error_t res = ADB_ERR_OK;
     adb_wired_info_t **wired = NULL;
     size_t wired_count = 0U;
@@ -103,6 +107,13 @@ static adbc__server_error_t adbc__cmd_devices(
 
     if(ctx == NULL || response_doc == NULL || response_root == NULL)
         return "invalid devices command arguments";
+
+    error = adbc__json_get_str(req_root, "key_path", 
+            false, &key_path);
+    if(error != NULL)
+        return error;
+    if(key_path[0] == '\0')
+        return "field 'key_path' must not be empty";
 
     arr = yyjson_mut_arr(response_doc);
     if(arr == NULL)
@@ -120,10 +131,11 @@ static adbc__server_error_t adbc__cmd_devices(
     if(wired_count > 0U && wired == NULL)
         return "ADB wired query returned an invalid device array";
 
+    adb_key_load(&key, ctx->adb_ctx, key_path);
+
     for(size_t i = 0U; i < wired_count; i++)
     {
         const char *serial = NULL;
-
         if(wired[i] == NULL ||
                 (serial = adb_wired_info_serial(wired[i])) == NULL)
             return "failed to get wired device serial";
@@ -156,6 +168,7 @@ static adbc__server_error_t adbc__cmd_devices(
                 "devices", arr))
         return "failed to add devices to JSON response";
 
+    adb_key_destroy(key);
     return NULL;
 }
 
@@ -184,7 +197,6 @@ static adbc__server_error_t adbc__cmd_connect(
             true, &serial);
     if(error != NULL)
         return error;
-
     if(serial[0] == '\0')
         return "field 'serial' must not be empty";
 
@@ -225,15 +237,17 @@ static adbc__server_error_t adbc__cmd_connect(
                 adb_conn_t*, ctx->devices.size - 1);
     }
 
-    if(!adbc_util_parse_endpoint(serial, 
+    if(adbc_util_parse_endpoint(serial, 
                 host, sizeof(host), &port))
     {
-        error = "serial is not a network endpoint";
-        goto cleanup;
+        res = adb_conn_create_wireless(conn, 
+                ctx->adb_ctx, host, port);
+    } else {
+        ADBC_WARN("serial is not a network endpoint, "
+            "attempting to use as usb serial number");
+        res = adb_conn_create_wired(conn,
+                ctx->adb_ctx, serial);
     }
-
-    res = adb_conn_create_wireless(conn, 
-            ctx->adb_ctx, host, port);
 
     if(res != ADB_ERR_OK)
     {
