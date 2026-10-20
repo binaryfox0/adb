@@ -31,14 +31,6 @@ static void *adb__malloc_default(
     return malloc(size);
 }
 
-static void *adb__malloc_fallback(
-        void* userdata, 
-        size_t size)
-{
-    (void)userdata;
-    return ((adb_realloc_fn)(uintptr_t)userdata)(userdata, NULL, size);
-}
-
 static void *adb__realloc_default(
         void* userdata,
         void *p, 
