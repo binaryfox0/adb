@@ -31,6 +31,14 @@ static void *adb__malloc_default(
     return malloc(size);
 }
 
+static void *adb__malloc_fallback(
+        void* userdata, 
+        size_t size)
+{
+    (void)userdata;
+    return ((adb_realloc_fn)(uintptr_t)userdata)(userdata, NULL, size);
+}
+
 static void *adb__realloc_default(
         void* userdata,
         void *p, 
@@ -48,7 +56,7 @@ static void adb__free_default(
     free(p);
 }
 
-void adb_set_alloc(
+adb_error_t adb_set_alloc(
         const adb_alloc_t *alloc)
 {
     if(!alloc)
@@ -57,10 +65,14 @@ void adb_set_alloc(
         adb__alloc.realloc = adb__realloc_default;
         adb__alloc.free = adb__free_default;
         adb__alloc.userdata = NULL;
-        return;
+        return ADB_ERR_OK;
     }
 
+    if(!alloc->malloc || !alloc->realloc || !alloc->free)
+        return ADB_ERR_PARAM;
+
     adb__alloc = *alloc;
+    return ADB_ERR_OK;
 }
 
 const adb_alloc_t *adb__alloc_get(void) {
