@@ -23,6 +23,7 @@ typedef enum
     ADB_ERR_UNIMPLEMENTED,
     ADB_ERR_AMBIGUOUS,
     ADB_ERR_NOT_FOUND,
+    ADB_ERR_CONT,
     ADB__ERR_COUNT
 } adb_error_t;
 

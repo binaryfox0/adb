@@ -70,6 +70,9 @@ adb_error_t adb_handshake(
         adb_conn_t *conn,
         adb_key_t *key);
 
+adb_error_t adb_conn_stream_dispatch(
+        adb_conn_t *conn);
+
 void adb_conn_destroy(
         adb_conn_t *conn);
 

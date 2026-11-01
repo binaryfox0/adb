@@ -21,6 +21,11 @@
 #include <mbedtls/x509.h>
 #include <mbedtls/md.h>
 #include <mbedtls/oid.h>
+#if defined(ADB_MBEDTLS_V3)
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/rsa.h>
+#endif
 
 #include "adb_alloc_priv.h"
 #include "adb_ctx_priv.h"
@@ -49,6 +54,11 @@ typedef struct
 typedef struct adb_key
 {
     mbedtls_pk_context pk;
+#if defined(ADB_MBEDTLS_V3)
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    bool rng_initialized;
+#endif
     mbedtls_svc_key_id_t psa_key_id;
     bool owns_psa_key;
     char *pubkey;
@@ -60,6 +70,26 @@ _Static_assert(ADB__RSA_MODULUS_SIZE % 4U == 0U,
         "RSA modulus size must be a whole number of words");
 _Static_assert(sizeof(adb__android_pubkey_t) == ADB__ANDROID_PUBKEY_SIZE,
         "adb__android_pubkey must be exactly the expected size");
+
+#if defined(ADB_MBEDTLS_V3)
+static int adb__key_rng_init(adb_key_t *key)
+{
+    int err = 0;
+
+    mbedtls_entropy_init(&key->entropy);
+    mbedtls_ctr_drbg_init(&key->ctr_drbg);
+    key->rng_initialized = true;
+    err = mbedtls_ctr_drbg_seed(&key->ctr_drbg,
+            mbedtls_entropy_func, &key->entropy, NULL, 0U);
+    if (err != 0)
+    {
+        mbedtls_ctr_drbg_free(&key->ctr_drbg);
+        mbedtls_entropy_free(&key->entropy);
+        key->rng_initialized = false;
+    }
+    return err;
+}
+#endif
 
 static void adb__store_u32_le(uint8_t *out, uint32_t value)
 {
@@ -223,8 +253,10 @@ adb_error_t adb_key_generate(adb_key_t **key, adb_ctx_t *ctx)
 {
     adb_error_t ret = ADB_ERR_CRYPTO;
     adb_key_t *tmp = NULL;
+#if !defined(ADB_MBEDTLS_V3)
     psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
     psa_status_t status = PSA_SUCCESS;
+#endif
     int err = 0;
 
     if (!key || !ctx)
@@ -234,6 +266,7 @@ adb_error_t adb_key_generate(adb_key_t **key, adb_ctx_t *ctx)
     ADB__INFO("generating new RSA key pair ("
             ADB__STRINGIFY(ADB__RSA_MODULUS_BITS) " bits)");
 
+#if !defined(ADB_MBEDTLS_V3)
     status = psa_crypto_init();
     if (status != PSA_SUCCESS)
     {
@@ -241,6 +274,7 @@ adb_error_t adb_key_generate(adb_key_t **key, adb_ctx_t *ctx)
                 (int)status);
         return ADB_ERR_CRYPTO;
     }
+#endif
 
     tmp = adb__calloc(1U, sizeof(*tmp));
     if (!tmp)
@@ -248,6 +282,20 @@ adb_error_t adb_key_generate(adb_key_t **key, adb_ctx_t *ctx)
 
     mbedtls_pk_init(&tmp->pk);
 
+#if defined(ADB_MBEDTLS_V3)
+    err = adb__key_rng_init(tmp);
+    if (err != 0)
+        goto cleanup;
+    err = mbedtls_pk_setup(&tmp->pk,
+            mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+    if (err != 0)
+        goto cleanup;
+    err = mbedtls_rsa_gen_key(mbedtls_pk_rsa(tmp->pk),
+            mbedtls_ctr_drbg_random, &tmp->ctr_drbg,
+            ADB__RSA_MODULUS_BITS, 65537);
+    if (err != 0)
+        goto cleanup;
+#else
     psa_set_key_type(&attributes, PSA_KEY_TYPE_RSA_KEY_PAIR);
     psa_set_key_bits(&attributes, (size_t)ADB__RSA_MODULUS_BITS);
     psa_set_key_usage_flags(&attributes,
@@ -271,6 +319,7 @@ adb_error_t adb_key_generate(adb_key_t **key, adb_ctx_t *ctx)
         ADB__ERROR("failed to wrap PSA RSA key (status %d)", err);
         goto cleanup;
     }
+#endif
 
     ADB__INFO(ADB__RSA_ALGORITHM " key pair generated successfully");
     *key = tmp;
@@ -287,7 +336,9 @@ adb_error_t adb_key_load(adb_key_t **key, adb_ctx_t *ctx, const char *path)
     adb_key_t *tmp = NULL;
     char *buffer = NULL;
     size_t file_size = 0U;
+#if !defined(ADB_MBEDTLS_V3)
     psa_status_t status = PSA_SUCCESS;
+#endif
     int err = 0;
 
     if (!key || !ctx || !path)
@@ -296,6 +347,7 @@ adb_error_t adb_key_load(adb_key_t **key, adb_ctx_t *ctx, const char *path)
 
     ADB__INFO("loading key from \"%s\"", path);
 
+#if !defined(ADB_MBEDTLS_V3)
     status = psa_crypto_init();
     if (status != PSA_SUCCESS)
     {
@@ -303,12 +355,22 @@ adb_error_t adb_key_load(adb_key_t **key, adb_ctx_t *ctx, const char *path)
                 (int)status);
         return ADB_ERR_CRYPTO;
     }
+#endif
 
     tmp = adb__calloc(1U, sizeof(*tmp));
     if (!tmp)
         return ADB_ERR_NO_MEM;
 
     mbedtls_pk_init(&tmp->pk);
+
+#if defined(ADB_MBEDTLS_V3)
+    err = adb__key_rng_init(tmp);
+    if (err != 0)
+    {
+        ret = ADB_ERR_CRYPTO;
+        goto cleanup;
+    }
+#endif
 
     ret = adb__util_read_file(path, &buffer, &file_size);
     if (ret != ADB_ERR_OK)
@@ -322,8 +384,14 @@ adb_error_t adb_key_load(adb_key_t **key, adb_ctx_t *ctx, const char *path)
         goto cleanup;
     }
 
+#if defined(ADB_MBEDTLS_V3)
+    err = mbedtls_pk_parse_key(&tmp->pk,
+            (const uint8_t *)buffer, file_size + 1U, NULL, 0U,
+            mbedtls_ctr_drbg_random, &tmp->ctr_drbg);
+#else
     err = mbedtls_pk_parse_key(&tmp->pk,
             (const uint8_t *)buffer, file_size + 1U, NULL, 0U);
+#endif
     if (err != 0)
     {
         adb__log_err_mbedtls(err,
@@ -332,9 +400,13 @@ adb_error_t adb_key_load(adb_key_t **key, adb_ctx_t *ctx, const char *path)
         goto cleanup;
     }
 
+#if defined(ADB_MBEDTLS_V3)
+    if (!mbedtls_pk_can_do(&tmp->pk, MBEDTLS_PK_RSA) ||
+#else
     if (!mbedtls_pk_can_do_psa(&tmp->pk,
                 PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_1),
                 PSA_KEY_USAGE_SIGN_HASH) ||
+#endif
             mbedtls_pk_get_bitlen(&tmp->pk) != ADB__RSA_MODULUS_BITS)
     {
         ADB__ERROR("the given key was not " ADB__RSA_ALGORITHM ": \"%s\"",
@@ -494,9 +566,13 @@ static bool adb__encode_android_pubkey(
     *out = (adb__android_pubkey_t){0};
     ADB__INFO("encoding Android public key from private key");
 
+#if defined(ADB_MBEDTLS_V3)
+    if (!mbedtls_pk_can_do(pk, MBEDTLS_PK_RSA) ||
+#else
     if (!mbedtls_pk_can_do_psa(pk,
                 PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_1),
                 PSA_KEY_USAGE_SIGN_HASH) ||
+#endif
             mbedtls_pk_get_bitlen(pk) != ADB__RSA_MODULUS_BITS)
         return false;
 
@@ -648,6 +724,13 @@ void adb_key_destroy(adb_key_t *key)
         return;
 
     mbedtls_pk_free(&key->pk);
+#if defined(ADB_MBEDTLS_V3)
+    if (key->rng_initialized)
+    {
+        mbedtls_ctr_drbg_free(&key->ctr_drbg);
+        mbedtls_entropy_free(&key->entropy);
+    }
+#endif
     if (key->owns_psa_key)
     {
         status = psa_destroy_key(key->psa_key_id);
@@ -737,7 +820,7 @@ bool adb__key_create_x509(
     int err = 0;
     size_t cert_len = 0U;
     uint8_t cert_der[4096] = {0};
-    static const uint8_t serial[] = {0x01U};
+    static uint8_t serial[] = {0x01U};
     mbedtls_x509write_cert writer;
 
     if (!key || !ctx || !crt)
@@ -754,7 +837,12 @@ bool adb__key_create_x509(
     if (err != 0)
         goto cleanup;
 
+#if defined(ADB_MBEDTLS_V3)
+    err = mbedtls_x509write_crt_der(&writer, cert_der, sizeof(cert_der),
+            mbedtls_ctr_drbg_random, &key->ctr_drbg);
+#else
     err = mbedtls_x509write_crt_der(&writer, cert_der, sizeof(cert_der));
+#endif
     if (err < 0)
         goto cleanup;
 
@@ -789,9 +877,16 @@ adb_error_t adb__key_sign(
     if (token_size != ADB__TOKEN_SIZE)
         return ADB_ERR_PROTOCOL;
 
+#if defined(ADB_MBEDTLS_V3)
+    err = mbedtls_pk_sign(&key->pk, MBEDTLS_MD_SHA1,
+            (const uint8_t *)token, token_size,
+            out_sig, ADB__RSA_MODULUS_SIZE, &sig_len,
+            mbedtls_ctr_drbg_random, &key->ctr_drbg);
+#else
     err = mbedtls_pk_sign(&key->pk, MBEDTLS_MD_SHA1,
             (const uint8_t *)token, token_size,
             out_sig, ADB__RSA_MODULUS_SIZE, &sig_len);
+#endif
     if (err != 0)
     {
         adb__log_err_mbedtls(err, "failed to sign token");

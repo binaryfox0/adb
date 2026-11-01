@@ -10,7 +10,7 @@ add_library(spake2
     src/spake2_u256.c
     src/spake2.c)
 target_include_directories(spake2 PUBLIC include/)
-target_link_libraries(spake2 PRIVATE MbedTLS::tfpsacrypto)
+target_link_libraries(spake2 PRIVATE ${ADB_MBEDTLS_CRYPTO_TARGET})
 #target_add_strict_flags(spake2)
 
 if(SPAKE2_BUILD_TESTS)

@@ -27,6 +27,7 @@
 #include "adb_transport_usb.h"
 #include "adb_transport_tcp.h"
 #include "adb_transport_custom.h"
+#include "adb_stream_priv.h"
 
 #define ADB__SUPPORTED_FEATURES \
     ADB__FEATURE_SENDRECV_V2 "," \
@@ -64,6 +65,7 @@ typedef struct adb_conn
     adb__str_t features;
 
     uint32_t next_id;
+    adb_stream_t *streams;
 } adb_conn_t;
 
 static const char *adb__conn_state_readable[ADB__CONN_STATE_COUNT] =
@@ -499,8 +501,19 @@ fail:
 void adb_conn_destroy(
         adb_conn_t *conn)
 {
+    adb_stream_t *stream = NULL;
     if(!conn)
         return;
+
+    while(conn->streams)
+    {
+        stream = conn->streams;
+        conn->streams = stream->next;
+        stream->conn = NULL;
+        stream->next = NULL;
+        if(stream->destroy_fn)
+            stream->destroy_fn(stream);
+    }
 
     adb__tls_destroy(conn->tls);
     adb__transport_destroy(&conn->transport);
@@ -666,4 +679,94 @@ bool adb__conn_support(
 uint32_t adb__conn_next_id(
         adb_conn_t *conn) {
     return conn ? conn->next_id++ : 1;
+}
+
+adb_error_t adb__conn_stream_add(
+        adb_conn_t *conn,
+        adb_stream_t *stream)
+{
+    if(!conn || !stream || stream->conn || !stream->packet_fn)
+        return ADB_ERR_PARAM;
+
+    stream->conn = conn;
+    stream->next = conn->streams;
+    conn->streams = stream;
+    return ADB_ERR_OK;
+}
+
+void adb__conn_stream_remove(
+        adb_conn_t *conn,
+        adb_stream_t *stream)
+{
+    adb_stream_t **cursor = NULL;
+    if(!conn || !stream)
+        return;
+
+    cursor = &conn->streams;
+    while(*cursor)
+    {
+        if(*cursor == stream)
+        {
+            *cursor = stream->next;
+            stream->next = NULL;
+            stream->conn = NULL;
+            return;
+        }
+        cursor = &(*cursor)->next;
+    }
+}
+
+adb_error_t adb_conn_stream_dispatch(
+        adb_conn_t *conn)
+{
+    adb_error_t res = ADB_ERR_OK;
+    adb__packet_t pkt = {0};
+    uint8_t *payload = NULL;
+    adb_stream_t *stream = NULL;
+
+    if(!conn)
+        return ADB_ERR_PARAM;
+
+    res = adb__packet_read(conn, &pkt, (void **)&payload);
+    if(res != ADB_ERR_OK)
+    {
+        for(stream = conn->streams; stream; stream = stream->next)
+        {
+            if(!stream->done)
+            {
+                stream->error = res;
+                stream->done = true;
+            }
+        }
+        return res;
+    }
+
+    for(stream = conn->streams; stream; stream = stream->next)
+    {
+        if(stream->local_id == pkt.arg1)
+            break;
+    }
+
+    if(!stream)
+    {
+        ADB__WARN("received packet for unknown stream id %u", pkt.arg1);
+        adb__free(payload);
+        return ADB_ERR_NOT_FOUND;
+    }
+
+    if(stream->done)
+    {
+        ADB__WARN("received packet for completed stream id %u", pkt.arg1);
+        adb__free(payload);
+        return ADB_ERR_NOT_FOUND;
+    }
+
+    res = stream->packet_fn(stream, &pkt, payload);
+    adb__free(payload);
+    if(res != ADB_ERR_OK)
+    {
+        stream->error = res;
+        stream->done = true;
+    }
+    return res;
 }

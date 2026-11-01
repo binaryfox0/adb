@@ -18,6 +18,7 @@
 typedef struct adb_ctx adb_ctx_t;
 typedef struct adb_conn adb_conn_t;
 typedef struct adb__tls adb__tls_t;
+typedef struct adb_stream adb_stream_t;
 
 adb_error_t adb__conn_from_sockaddr(
         adb_conn_t **conn,
@@ -64,6 +65,14 @@ bool adb__conn_support(
 
 uint32_t adb__conn_next_id(
         adb_conn_t *conn);
+
+adb_error_t adb__conn_stream_add(
+        adb_conn_t *conn,
+        adb_stream_t *stream);
+
+void adb__conn_stream_remove(
+        adb_conn_t *conn,
+        adb_stream_t *stream);
 
 
 #endif

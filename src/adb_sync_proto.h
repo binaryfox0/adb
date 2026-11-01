@@ -31,6 +31,10 @@ ADB__NODISCARD adb_error_t adb__sync_proto_open(
         adb__sync_t *sync,
         adb_conn_t *conn);
 
+ADB__NODISCARD adb_error_t adb__sync_proto_open_start(
+        adb__sync_t *sync,
+        adb_conn_t *conn);
+
 ADB__NODISCARD adb_error_t adb__sync_proto_write(
         adb__sync_t *sync,
         const void *payload,
@@ -38,6 +42,10 @@ ADB__NODISCARD adb_error_t adb__sync_proto_write(
 
 ADB__NODISCARD adb_error_t adb__sync_proto_read(
         adb__sync_t *sync);
+
+adb_error_t adb__sync_proto_dispatch(
+        adb__sync_t *sync,
+        const adb__packet_t *pkt);
 
 ADB__NODISCARD adb_error_t adb__sync_proto_read_timeout(
         adb__sync_t *sync,

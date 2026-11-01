@@ -26,6 +26,9 @@ typedef struct
         };
         const char *serial;
     };
+    const char *pull_remote_path;
+    const char *pull_local_path;
+    const char *stat_path;
 } adbc_cmd_options_t;
 
 void kill_server_cmd(void *data);
@@ -33,5 +36,8 @@ void devices_cmd(void *data);
 void pair_cmd(void *data);
 void pair_qr_cmd(void *data);
 void connect_cmd(void *data);
+void disconnect_cmd(void *data);
 void push_cmd(void *data);
+void pull_cmd(void *data);
+void stat_cmd(void *data);
 #endif

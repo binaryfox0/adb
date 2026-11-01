@@ -7,6 +7,7 @@ option(ADB_NO_ZSTD "Build libadb without Zstandard compression support" OFF)
 option(ADB_NO_BROTLI "Build libadb without LZ4 compression support" OFF)
 option(ADB_NO_USB "Build libadb without USB support" OFF)
 option(ADB_BUILD_CLI "Build libadb command line tool" OFF)
+option(ADB_FORCE_MBEDTLS3 "Require MbedTLS 3.x" OFF)
 
 function(target_add_strict_flags target)
     if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -74,28 +75,29 @@ endfunction()
 
 include(FetchContent)
 
-find_package(MbedTLS 4.2.0 CONFIG QUIET)
-
-if(MbedTLS_FOUND)
-    message(STATUS "System MbedTLS version ${MbedTLS_VERSION} was found")
+if(ADB_FORCE_MBEDTLS3)
+    find_package(MbedTLS 3.6 CONFIG QUIET)
 else()
-    message(STATUS "MbedTLS 4.2.0 not found; fetching it")
+    find_package(MbedTLS 3.6 CONFIG QUIET)
+    if(NOT MbedTLS_FOUND)
+        find_package(MbedTLS 4.2 CONFIG QUIET)
+    endif()
+endif()
 
-    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+if(NOT MbedTLS_FOUND)
+    if(ADB_FORCE_MBEDTLS3)
+        message(FATAL_ERROR "ADB_FORCE_MBEDTLS3 is ON, but Mbed TLS 3.6 or newer was not found")
+    endif()
+    message(FATAL_ERROR "MbedTLS 3.6+ or 4.2+ is required; install one of these versions")
+endif()
 
-    FetchContent_Declare(
-        mbedtls
-        GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
-        GIT_TAG        v4.2.0
-        GIT_SHALLOW    TRUE
-    )
-
-    FetchContent_MakeAvailable(mbedtls)
-
-    add_library(MbedTLS::mbedtls ALIAS mbedtls)
-    add_library(MbedTLS::mbedx509 ALIAS mbedx509)
-    add_library(MbedTLS::tfpsacrypto ALIAS tfpsacrypto)
+message(STATUS "System MbedTLS version ${MbedTLS_VERSION} was found")
+if(MbedTLS_VERSION VERSION_LESS 4.0.0)
+    set(ADB_MBEDTLS_CRYPTO_TARGET MbedTLS::mbedcrypto)
+    set(ADB_MBEDTLS_VERSION_DEFINITION ADB_MBEDTLS_V3)
+else()
+    set(ADB_MBEDTLS_CRYPTO_TARGET MbedTLS::tfpsacrypto)
+    set(ADB_MBEDTLS_VERSION_DEFINITION ADB_MBEDTLS_V4)
 endif()
 
 find_package(PkgConfig REQUIRED)
@@ -179,12 +181,14 @@ add_library(adb
     src/adb_decomp.c
     src/adb_comp.c
     src/adb_conn.c
+    src/adb_stream.c
     src/adb_sync_proto.c
     src/adb_sync.c)
 
 target_compile_definitions(adb PRIVATE
     ZSTD_STATIC_LINKING_ONLY
     LZ4F_STATIC_LINKING_ONLY
+    ${ADB_MBEDTLS_VERSION_DEFINITION}
     $<$<BOOL:${ADB_NO_LZ4}>:ADB_NO_LZ4>
     $<$<BOOL:${ADB_NO_ZSTD}>:ADB_NO_ZSTD>
     $<$<BOOL:${ADB_NO_BROTLI}>:ADB_NO_BROTLI>
@@ -196,7 +200,7 @@ target_link_libraries(adb PRIVATE
     $<$<NOT:$<BOOL:${ADB_NO_USB}>>:PkgConfig::libusb>
     MbedTLS::mbedtls
     MbedTLS::mbedx509
-    MbedTLS::tfpsacrypto
+    ${ADB_MBEDTLS_CRYPTO_TARGET}
     spake2
     mdns
     lz4

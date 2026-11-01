@@ -38,4 +38,4 @@ Send/Receive is fully usable, but the send-side ACK behaviour differs from Googl
 Instead of expecting an ACK after every send, we check for an ACK with a timeout and only block when our ASB (Available Send Bytes) is exhausted.
 
 ## Research
-[Research and documentation on the Android Debug Bridge (ADB) protocol](./docs)
+[Research and documentation on the ADB protocol](./docs)

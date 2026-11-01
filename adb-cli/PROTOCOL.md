@@ -1,10 +1,11 @@
 # Protocol Specification
 ## Overview
 
-This protocol defines a packet-based communication interface between a client and a server. It supports command execution, logging, and result reporting through three packet types:
+This protocol defines a packet-based communication interface between a client and a server. It supports command execution, logging, transfer progress, and result reporting through four packet types:
 
 - **Command Packet (`cmd`)**: Requests the server to execute a command.
 - **Log Packet (`log`)**: Reports progress, diagnostic information, warnings, or errors during execution.
+- **Progress Packet (`progress`)**: Reports transferred and total bytes during file transfers.
 - **Result Packet (`result`)**: Returns the outcome of a completed command.
 
 ## 1. Command Packet
@@ -27,14 +28,20 @@ These fields apply to pairing and connection commands.
 |---|---|---|---|
 | `key_path` | string | No | Path to the RSA-2048 private key. Defaults to `$HOME/.android/adbkey` if omitted. |
 
+The `disconnect` command requires a `serial` field identifying the connected device, using the same serial or endpoint supplied to `connect`.
+
 ### 1.3 File Transfer Fields
 
-The following fields are required for `pull` and `push` commands.
+The following fields apply to `pull` and `push` commands. The `stat` command
+uses only `remote_path`.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `remote_path` | string | Yes | Path to the target file on the remote device. |
 | `local_path` | string | Yes | Path to the target file on the local machine. |
+
+The `stat` command returns the remote file's device, inode, mode, link count,
+ownership, size, and timestamps in the result packet.
 
 ### 1.4 Example: Pull Command
 
@@ -77,6 +84,16 @@ Log Packets can be transmitted throughout execution, allowing the client to rece
     "msg": "Cryptography error"
 }
 ```
+
+### 2.3 Transfer Progress Packet
+
+During `push` and `pull`, the server sends a progress packet at approximately one-second intervals, followed by a final progress packet before the result.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | string | Yes | Packet type. Must be `"progress"`. |
+| `bytes` | unsigned integer | Yes | Bytes transferred so far. |
+| `total_bytes` | unsigned integer | Yes | Total file size in bytes. |
 
 ### 3\. Result Packet
 
@@ -143,7 +160,7 @@ A typical command execution follows these steps:
 * Request: The client sends a Command Packet containing the command name and required arguments.
 * Validation: The server validates the request and checks the required fields.
 * Execution: The server executes the requested command.
-* Logging: During execution, the server may send one or more Log Packets to report progress or diagnostic information.
+* Logging and progress: During execution, the server may send Log Packets and, for file transfers, periodic Progress Packets.
 * Completion: The server sends a Result Packet containing the outcome and any returned data.
 
 ### 4.1 Example Flow
@@ -157,6 +174,8 @@ Client                  Server
   |                        |
   |<------- Log -----------|
   |                        |
+    |<---- Progress ---------|
+    |                        |
   |<------ Result ---------|
   |                        |
 ```
@@ -167,6 +186,7 @@ This protocol provides a consistent mechanism for command execution, real-time l
 
 * Command Packets initiate operations and carry command-specific parameters.
 * Log Packets provide progress updates and diagnostic information during execution.
+* Progress Packets report transferred bytes and total bytes for `push` and `pull`.
 * Result Packets communicate the final outcome and any associated data or error details.
 * Default Configuration allows optional fields, such as `key_path` and `log`, to be omitted when their default values are appropriate.
 * Command-Specific Fields support operations such as device discovery, pairing, connection establishment, and file transfer.

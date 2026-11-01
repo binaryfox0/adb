@@ -35,6 +35,15 @@ int main(int argc, char **argv)
                 "Endpoint of the target device (host:port)"),
         aparse_arg_end_marker
     };
+
+        aparse_arg disconnect_args[] =
+        {
+                aparse_arg_string(
+                                "serial",
+                                NULL, 0,
+                                "Serial or endpoint of the connected device"),
+                aparse_arg_end_marker
+        };
     
     aparse_arg push_args[] =
     {
@@ -48,6 +57,28 @@ int main(int argc, char **argv)
                 "Path to destination file on the device"),
         aparse_arg_end_marker
     };
+
+        aparse_arg pull_args[] =
+        {
+                aparse_arg_string(
+                                "remote_path",
+                                NULL, 0,
+                                "Path to source file on the device"),
+                aparse_arg_string(
+                                "local_path",
+                                NULL, 0,
+                                "Path to destination file on the host"),
+                aparse_arg_end_marker
+        };
+
+        aparse_arg stat_args[] =
+        {
+                aparse_arg_string(
+                                "path",
+                                NULL, 0,
+                                "Path to the remote file"),
+                aparse_arg_end_marker
+        };
 
     aparse_arg commands[] =
     {
@@ -74,10 +105,22 @@ int main(int argc, char **argv)
                 &options, sizeof(options), 
                 "Connect to a device via TCP/IP", 
                 adbc_cmd_options_t, endpoint),
+        aparse_arg_subparser("disconnect", disconnect_args, disconnect_cmd,
+                &options, sizeof(options),
+                "Disconnect a connected device",
+                adbc_cmd_options_t, serial),
         aparse_arg_subparser("push", push_args, push_cmd, 
                 &options, sizeof(options), 
                 "Copy local files/directories to device", 
                 adbc_cmd_options_t, local_path, remote_path),
+        aparse_arg_subparser("pull", pull_args, pull_cmd,
+                &options, sizeof(options),
+                "Copy files from device to local host",
+                adbc_cmd_options_t, pull_remote_path, pull_local_path),
+        aparse_arg_subparser("stat", stat_args, stat_cmd,
+                &options, sizeof(options),
+                "Show remote file information",
+                adbc_cmd_options_t, stat_path),
         aparse_arg_end_marker
     };
     aparse_arg main_args[] =

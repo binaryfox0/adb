@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 
 #include <yyjson.h>
 #include <adb/adb.h>
@@ -25,12 +26,103 @@
 
 typedef struct
 {
+    adb_conn_t *conn;
+    char *serial;
+} adbc__device_t;
+
+typedef struct
+{
     adb_ctx_t *adb_ctx;
     adbc_dynarr_t devices;
+    int client_fd;
     bool quit;
 } adbc__server_ctx_t;
 
+static void adbc__device_destroy(adbc__device_t *device)
+{
+    if(device == NULL)
+        return;
+
+    adb_conn_destroy(device->conn);
+    device->conn = NULL;
+    free(device->serial);
+    device->serial = NULL;
+}
+
+typedef struct
+{
+    adbc__server_ctx_t *server;
+    FILE *file;
+    uint64_t bytes;
+    uint64_t total_bytes;
+    uint64_t last_report_ms;
+    bool sending;
+} adbc__transfer_t;
+
 typedef const char *adbc__server_error_t;
+
+static bool adbc__send_progress(adbc__transfer_t *transfer)
+{
+    yyjson_mut_doc *doc = NULL;
+    yyjson_mut_val *root = NULL;
+    bool result = false;
+
+    if(transfer == NULL || transfer->server == NULL ||
+            transfer->server->client_fd < 0)
+        return false;
+
+    doc = yyjson_mut_doc_new(NULL);
+    if(doc == NULL)
+        return false;
+
+    root = yyjson_mut_obj(doc);
+    if(root == NULL)
+        goto cleanup;
+
+    yyjson_mut_doc_set_root(doc, root);
+    if(!yyjson_mut_obj_add_str(doc, root, "type", "progress") ||
+            !yyjson_mut_obj_add_uint(doc, root, "bytes", transfer->bytes) ||
+            !yyjson_mut_obj_add_uint(doc, root, "total_bytes", transfer->total_bytes))
+        goto cleanup;
+
+    result = adbc_send_json(transfer->server->client_fd, doc);
+
+cleanup:
+    yyjson_mut_doc_free(doc);
+    return result;
+}
+
+static bool adbc__maybe_send_progress(adbc__transfer_t *transfer)
+{
+    uint64_t now = adbc_util_monotonic_ms();
+    if(now - transfer->last_report_ms < UINT64_C(1000))
+        return true;
+
+    if(!adbc__send_progress(transfer))
+        return false;
+    transfer->last_report_ms = now;
+    return true;
+}
+
+static int adbc__transfer_read(void *userdata, uint8_t *buffer, size_t size)
+{
+    adbc__transfer_t *transfer = userdata;
+    size_t count = fread(buffer, 1U, size, transfer->file);
+    transfer->bytes += (uint64_t)count;
+    if(!adbc__maybe_send_progress(transfer))
+        return -(int)ADB_ERR_IO;
+    return (int)count;
+}
+
+static int adbc__transfer_write(void *userdata, const uint8_t *buffer, size_t size)
+{
+    adbc__transfer_t *transfer = userdata;
+    size_t count = fwrite(buffer, 1U, size, transfer->file);
+    transfer->bytes += (uint64_t)count;
+    if(!adbc__maybe_send_progress(transfer))
+        return -(int)ADB_ERR_IO;
+    return (int)count;
+}
 
 typedef adbc__server_error_t (*adbc__server_cmd_handler_fn)(
         adbc__server_ctx_t *ctx,
@@ -185,6 +277,7 @@ static adbc__server_error_t adbc__cmd_connect(
     uint16_t port = 0U;
     adb_key_t *key = NULL;
     adb_error_t res = ADB_ERR_OK;
+    adbc__device_t *device = NULL;
     adb_conn_t **conn = NULL;
 
     (void)response_doc;
@@ -216,26 +309,34 @@ static adbc__server_error_t adbc__cmd_connect(
 
     for(size_t i = 0U; i < ctx->devices.size; i++)
     {
-        adb_conn_t **candidate =
-            &((adb_conn_t**)ctx->devices.data)[i];
-        if(!*candidate)
+        adbc__device_t *candidate =
+            &((adbc__device_t*)ctx->devices.data)[i];
+        if(candidate->conn != NULL &&
+                candidate->serial != NULL &&
+                strcmp(candidate->serial, serial) == 0)
         {
-            conn = candidate;
-            break;
+            error = "device is already connected";
+            goto cleanup;
+        }
+        if(device == NULL && candidate->conn == NULL)
+        {
+            device = candidate;
         }
     }
 
-    if(!conn)
+    if(device == NULL)
     {
-        if(!adbc_dynarr_push(&ctx->devices, NULL))
+        adbc__device_t empty = {0};
+        if(!adbc_dynarr_push(&ctx->devices, &empty))
         {
             error = "out of memory while allocating device slot";
             goto cleanup;
         }
 
-        conn = &adbc_dynarr_get(&ctx->devices, 
-                adb_conn_t*, ctx->devices.size - 1);
+        device = &adbc_dynarr_get(&ctx->devices,
+                adbc__device_t, ctx->devices.size - 1);
     }
+    conn = &device->conn;
 
     if(adbc_util_parse_endpoint(serial, 
                 host, sizeof(host), &port))
@@ -262,16 +363,57 @@ static adbc__server_error_t adbc__cmd_connect(
         goto cleanup;
     }
 
+    device->serial = malloc(strlen(serial) + 1U);
+    if(device->serial == NULL)
+    {
+        error = "out of memory while storing device serial";
+        goto cleanup;
+    }
+    memcpy(device->serial, serial, strlen(serial) + 1U);
+
 cleanup:
     if(key != NULL)
         adb_key_destroy(key);
 
-    if(error && conn)
-    {
-        adb_conn_destroy(*conn);
-        *conn = NULL;
-    }
+    if(error && device != NULL)
+        adbc__device_destroy(device);
     return error;
+}
+
+static adbc__server_error_t adbc__cmd_disconnect(
+        adbc__server_ctx_t *ctx,
+        yyjson_val *req_root,
+        yyjson_mut_doc *response_doc,
+        yyjson_mut_val *response_root)
+{
+    const char *serial = NULL;
+    adbc__server_error_t error = NULL;
+
+    (void)response_doc;
+    (void)response_root;
+
+    if(ctx == NULL)
+        return "invalid server context";
+
+    error = adbc__json_get_str(req_root, "serial", true, &serial);
+    if(error != NULL)
+        return error;
+    if(serial[0] == '\0')
+        return "field 'serial' must not be empty";
+
+    for(size_t i = 0U; i < ctx->devices.size; i++)
+    {
+        adbc__device_t *device =
+            &adbc_dynarr_get(&ctx->devices, adbc__device_t, i);
+        if(device->conn != NULL && device->serial != NULL &&
+                strcmp(device->serial, serial) == 0)
+        {
+            adbc__device_destroy(device);
+            return NULL;
+        }
+    }
+
+    return "device is not connected";
 }
 
 
@@ -282,23 +424,31 @@ static adbc__server_error_t adbc__cmd_push(
     yyjson_mut_val *response_root)
 {
     adb_conn_t **conn = NULL;
-    adb_conn_t **tmp = NULL;
+    adbc__device_t *device = NULL;
     const char *local_path = NULL;
     const char *remote_path = NULL;
+    struct stat file_info = {0};
+    FILE *file = NULL;
+    adbc__transfer_t transfer = {0};
     adb_error_t res = ADB_ERR_OK;
     adbc__server_error_t error = NULL;
 
     (void)response_doc;
     (void)response_root;
 
+    if(ctx == NULL)
+        return "invalid server context";
+
     for(size_t i = 0; i < ctx->devices.size; i++)
     {
-        tmp = &adbc_dynarr_get(&ctx->devices, adb_conn_t*, i);
-        if(!*tmp)
+        adbc__device_t *candidate =
+            &adbc_dynarr_get(&ctx->devices, adbc__device_t, i);
+        if(candidate->conn == NULL)
             continue;
         if(conn)
             return "more than one device was connected";
-        conn = tmp;
+        device = candidate;
+        conn = &device->conn;
     }
 
     if (!conn)
@@ -314,18 +464,188 @@ static adbc__server_error_t adbc__cmd_push(
     if (error)
         goto end;
 
-    res = adb_sync_push_file(*conn, local_path, remote_path);
+    if(stat(local_path, &file_info) != 0 || file_info.st_size < 0)
+    {
+        error = "failed to get local file information";
+        goto end;
+    }
+
+    file = fopen(local_path, "rb");
+    if(file == NULL)
+    {
+        error = "failed to open local file";
+        goto end;
+    }
+
+    transfer.server = ctx;
+    transfer.file = file;
+    transfer.total_bytes = (uint64_t)file_info.st_size;
+    transfer.last_report_ms = adbc_util_monotonic_ms();
+    res = adb_sync_push(*conn, remote_path,
+            (uint32_t)file_info.st_mode,
+            (uint32_t)file_info.st_mtim.tv_sec,
+            (size_t)file_info.st_size,
+            adbc__transfer_read, &transfer);
     if (res != ADB_ERR_OK)
         error = adb_strerror(res);
+    else if(!adbc__send_progress(&transfer))
+        error = "failed to send final transfer progress";
 
 end:
+    if(file != NULL)
+        (void)fclose(file);
+    if(error)
+        adbc__device_destroy(device);
+    return error;
+}
+
+static adbc__server_error_t adbc__cmd_pull(
+        adbc__server_ctx_t *ctx,
+        yyjson_val *req_root,
+        yyjson_mut_doc *response_doc,
+        yyjson_mut_val *response_root)
+{
+    adb_conn_t **conn = NULL;
+    adbc__device_t *device = NULL;
+    const char *local_path = NULL;
+    const char *remote_path = NULL;
+    adb_sync_stat_t remote_info = {0};
+    FILE *file = NULL;
+    adbc__transfer_t transfer = {0};
+    adb_error_t res = ADB_ERR_OK;
+    int remote_errno = 0;
+    bool local_created = false;
+    adbc__server_error_t error = NULL;
+
+    (void)response_doc;
+    (void)response_root;
+
+    if(ctx == NULL)
+        return "invalid server context";
+
+    for(size_t i = 0; i < ctx->devices.size; i++)
+    {
+        adbc__device_t *candidate =
+            &adbc_dynarr_get(&ctx->devices, adbc__device_t, i);
+        if(candidate->conn == NULL)
+            continue;
+        if(conn)
+            return "more than one device was connected";
+        device = candidate;
+        conn = &device->conn;
+    }
+
+    if(!conn)
+        return "no device was connected";
+
+    error = adbc__json_get_str(req_root, "local_path", true, &local_path);
+    if(error != NULL)
+        goto end;
+    error = adbc__json_get_str(req_root, "remote_path", true, &remote_path);
+    if(error != NULL)
+        goto end;
+
+    res = adb_sync_stat(*conn, remote_path, &remote_info, &remote_errno);
+    if(res != ADB_ERR_OK)
+    {
+        error = adb_strerror(res);
+        goto end;
+    }
+
+    file = fopen(local_path, "wb");
+    if(file == NULL)
+    {
+        error = "failed to open local file";
+        goto end;
+    }
+    local_created = true;
+
+    transfer.server = ctx;
+    transfer.file = file;
+    transfer.total_bytes = remote_info.size;
+    transfer.last_report_ms = adbc_util_monotonic_ms();
+    res = adb_sync_pull(*conn, remote_path, adbc__transfer_write, &transfer);
+    if(res != ADB_ERR_OK)
+        error = adb_strerror(res);
+    else if(!adbc__send_progress(&transfer))
+        error = "failed to send final transfer progress";
+
+end:
+    if(file != NULL)
+    {
+        if(fclose(file) != 0 && error == NULL)
+            error = "failed to close local file";
+    }
     if(error)
     {
-        adb_conn_destroy(*conn);
-        *conn = NULL;
+        if(local_created)
+            (void)remove(local_path);
+        adbc__device_destroy(device);
     }
     return error;
 }
+
+static adbc__server_error_t adbc__cmd_stat(
+    adbc__server_ctx_t *ctx,
+    yyjson_val *req_root,
+    yyjson_mut_doc *response_doc,
+    yyjson_mut_val *response_root)
+{
+    adb_conn_t *conn = NULL;
+    const char *remote_path = NULL;
+    adb_sync_stat_t remote_info = {0};
+    adb_error_t res = ADB_ERR_OK;
+
+    if(ctx == NULL || response_doc == NULL || response_root == NULL)
+        return "invalid stat command arguments";
+
+    for(size_t i = 0U; i < ctx->devices.size; i++)
+    {
+        adbc__device_t *candidate =
+            &adbc_dynarr_get(&ctx->devices, adbc__device_t, i);
+        if(candidate->conn == NULL)
+            continue;
+        if(conn != NULL)
+            return "more than one device was connected";
+        conn = candidate->conn;
+    }
+
+    if(conn == NULL)
+        return "no device was connected";
+
+    if(adbc__json_get_str(req_root, "remote_path", true,
+                &remote_path) != NULL)
+        return "invalid remote path";
+
+    res = adb_sync_stat(conn, remote_path, &remote_info, NULL);
+    if(res != ADB_ERR_OK)
+        return adb_strerror(res);
+
+    if(!yyjson_mut_obj_add_uint(response_doc, response_root,
+                "dev", remote_info.dev) ||
+            !yyjson_mut_obj_add_uint(response_doc, response_root,
+                "ino", remote_info.ino) ||
+            !yyjson_mut_obj_add_uint(response_doc, response_root,
+                "mode", remote_info.mode) ||
+            !yyjson_mut_obj_add_uint(response_doc, response_root,
+                "nlink", remote_info.nlink) ||
+            !yyjson_mut_obj_add_uint(response_doc, response_root,
+                "uid", remote_info.uid) ||
+            !yyjson_mut_obj_add_uint(response_doc, response_root,
+                "gid", remote_info.gid) ||
+            !yyjson_mut_obj_add_uint(response_doc, response_root,
+                "size", remote_info.size) ||
+            !yyjson_mut_obj_add_sint(response_doc, response_root,
+                "atime", remote_info.atime) ||
+            !yyjson_mut_obj_add_sint(response_doc, response_root,
+                "mtime", remote_info.mtime) ||
+            !yyjson_mut_obj_add_sint(response_doc, response_root,
+                "ctime", remote_info.ctime))
+        return "failed to construct stat response";
+
+    return NULL;
+}
+
 static bool adbc__handle_cmd(adbc__server_ctx_t *ctx, const int client_fd)
 {
     static const struct
@@ -337,7 +657,10 @@ static bool adbc__handle_cmd(adbc__server_ctx_t *ctx, const int client_fd)
         { "quit", adbc__cmd_quit },
         { "devices", adbc__cmd_devices },
         { "connect", adbc__cmd_connect },
-        { "push", adbc__cmd_push }
+        { "disconnect", adbc__cmd_disconnect },
+        { "push", adbc__cmd_push },
+        { "pull", adbc__cmd_pull },
+        { "stat", adbc__cmd_stat }
     };
 
     bool result = false;
@@ -472,7 +795,7 @@ void start_server_cmd(void *data)
     int fd = -1;
     int client_fd = -1;
     int option = 1;
-    adb_conn_t *conn = NULL;
+    adbc__device_t device = {0};
 
     if(options == NULL)
     {
@@ -520,7 +843,7 @@ void start_server_cmd(void *data)
         goto cleanup;
     }
 
-    adbc_dynarr_init(&ctx.devices, sizeof(adb_conn_t*));
+    adbc_dynarr_init(&ctx.devices, sizeof(adbc__device_t));
     while(!ctx.quit)
     {
         ADBC_INFO("waiting for the next command");
@@ -535,8 +858,10 @@ void start_server_cmd(void *data)
         }
 
         adb_log_set_userdata((void *)(intptr_t)client_fd);
+        ctx.client_fd = client_fd;
         if(!adbc__handle_cmd(&ctx, client_fd))
             ADBC_WARN("failed to handle client command");
+        ctx.client_fd = -1;
         adb_log_set_userdata((void *)(intptr_t)-1);
 
         if(close(client_fd) != 0)
@@ -551,8 +876,8 @@ cleanup:
     if(client_fd >= 0)
         (void)close(client_fd);
 
-    adbc_dynarr_foreach(&ctx.devices, adb_conn_t*, conn)
-        adb_conn_destroy(conn);
+    adbc_dynarr_foreach(&ctx.devices, adbc__device_t, device)
+        adbc__device_destroy(&device);
     adbc_dynarr_destroy(&ctx.devices);
 
     if(ctx.adb_ctx != NULL)
