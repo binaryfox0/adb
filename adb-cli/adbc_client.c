@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
+#include <stdlib.h>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -279,13 +280,20 @@ static void adbc__display_transfer_progress(
     *last_bytes = bytes;
     *last_time_ms = now;
 
+    if(total == 0U)
+    {
+        fprintf(stderr, "\r%llu bytes transferred %.1fKB/s",
+                (unsigned long long)bytes, rate / 1024.0);
+        fflush(stderr);
+        return;
+    }
+
     if(total > 0U)
     {
         uint64_t shown_bytes = bytes < total ? bytes : total;
         percent = (double)shown_bytes * 100.0 / (double)total;
         remaining = total - shown_bytes;
-    } else
-        percent = 100.0;
+    }
 
     filled = (unsigned int)(percent * 20.0 / 100.0);
     if(rate > 0.0)
@@ -304,60 +312,12 @@ static void adbc__display_transfer_progress(
     fflush(stderr);
 }
 
-static void adbc__transfer_cmd(
-    adbc_cmd_options_t *options,
-    const char *command,
-    const char *local_path,
-    const char *remote_path)
+static void adbc__transfer_wait(int fd)
 {
-    int fd = -1;
-    yyjson_mut_doc *doc = NULL;
-    yyjson_mut_val *root = NULL;
     bool done = false;
     bool displayed_progress = false;
     uint64_t last_bytes = 0U;
     uint64_t last_time_ms = adbc_util_monotonic_ms();
-
-    fd = adbc__connect_server(options);
-    if(fd < 0)
-        goto cleanup;
-
-    doc = yyjson_mut_doc_new(NULL);
-    if(!doc)
-    {
-        ADBC_ERROR("failed to allocate transfer command");
-        ADBC_INFO("reason: out of memory");
-        goto cleanup;
-    }
-
-    root = yyjson_mut_obj(doc);
-    if(!root)
-    {
-        ADBC_ERROR("failed to create transfer command");
-        ADBC_INFO("reason: out of memory");
-        goto cleanup;
-    }
-
-    yyjson_mut_doc_set_root(doc, root);
-    if(!yyjson_mut_obj_add_str(doc, root, "type", "cmd") ||
-       !yyjson_mut_obj_add_str(doc, root, "cmd", command) ||
-    !yyjson_mut_obj_add_str(doc, root, "local_path", local_path) ||
-    !yyjson_mut_obj_add_str(doc, root, "remote_path", remote_path))
-    {
-        ADBC_ERROR("failed to build transfer command");
-        ADBC_INFO("reason: JSON allocation failed");
-        goto cleanup;
-    }
-
-    if(!adbc_send_json(fd, doc))
-    {
-        ADBC_ERROR("failed to send transfer command");
-        ADBC_INFO("reason: JSON send operation failed");
-        goto cleanup;
-    }
-
-    yyjson_mut_doc_free(doc);
-    doc = NULL;
 
     while(!done)
     {
@@ -408,6 +368,126 @@ static void adbc__transfer_cmd(
 
     if(displayed_progress)
         fputc('\n', stderr);
+}
+
+static void adbc__transfer_cmd(
+    adbc_cmd_options_t *options,
+    const char *command,
+    const char *local_path,
+    const char *remote_path)
+{
+    int fd = -1;
+    yyjson_mut_doc *doc = NULL;
+    yyjson_mut_val *root = NULL;
+
+    fd = adbc__connect_server(options);
+    if(fd < 0)
+        goto cleanup;
+
+    doc = yyjson_mut_doc_new(NULL);
+    if(!doc)
+    {
+        ADBC_ERROR("failed to allocate transfer command");
+        ADBC_INFO("reason: out of memory");
+        goto cleanup;
+    }
+
+    root = yyjson_mut_obj(doc);
+    if(!root)
+    {
+        ADBC_ERROR("failed to create transfer command");
+        ADBC_INFO("reason: out of memory");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_set_root(doc, root);
+    if(!yyjson_mut_obj_add_str(doc, root, "type", "cmd") ||
+       !yyjson_mut_obj_add_str(doc, root, "cmd", command) ||
+    !yyjson_mut_obj_add_str(doc, root, "local_path", local_path) ||
+    !yyjson_mut_obj_add_str(doc, root, "remote_path", remote_path))
+    {
+        ADBC_ERROR("failed to build transfer command");
+        ADBC_INFO("reason: JSON allocation failed");
+        goto cleanup;
+    }
+
+    if(!adbc_send_json(fd, doc))
+    {
+        ADBC_ERROR("failed to send transfer command");
+        ADBC_INFO("reason: JSON send operation failed");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_free(doc);
+    doc = NULL;
+    adbc__transfer_wait(fd);
+
+cleanup:
+    yyjson_mut_doc_free(doc);
+    adbc__close_socket(&fd);
+}
+
+static void adbc__pull_transfer_cmd(
+        adbc_cmd_options_t *options,
+        const char *const *local_paths)
+{
+    int fd = -1;
+    yyjson_mut_doc *doc = NULL;
+    yyjson_mut_val *root = NULL;
+    yyjson_mut_val *files = NULL;
+
+    fd = adbc__connect_server(options);
+    if(fd < 0)
+        goto cleanup;
+
+    doc = yyjson_mut_doc_new(NULL);
+    if(doc == NULL)
+    {
+        ADBC_ERROR("failed to allocate pull command");
+        goto cleanup;
+    }
+
+    root = yyjson_mut_obj(doc);
+    files = yyjson_mut_arr(doc);
+    if(root == NULL || files == NULL)
+    {
+        ADBC_ERROR("failed to create pull command");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_set_root(doc, root);
+    if(!yyjson_mut_obj_add_str(doc, root, "type", "cmd") ||
+            !yyjson_mut_obj_add_str(doc, root, "cmd", "pull") ||
+            !yyjson_mut_obj_add_val(doc, root, "files", files))
+    {
+        ADBC_ERROR("failed to build pull command");
+        goto cleanup;
+    }
+
+    for(size_t i = 0U; i < options->pull_remote_paths.size; i++)
+    {
+        yyjson_mut_val *file = yyjson_mut_obj(doc);
+        const char *remote_path = aparse_list_get(
+                &options->pull_remote_paths, const char *, i);
+        if(file == NULL ||
+                !yyjson_mut_obj_add_str(doc, file, "remote_path", remote_path) ||
+                !yyjson_mut_obj_add_str(doc, file, "local_path", local_paths[i]) ||
+                !yyjson_mut_arr_add_val(files, file))
+        {
+            ADBC_ERROR("failed to build pull file list");
+            goto cleanup;
+        }
+    }
+
+    if(!adbc_send_json(fd, doc))
+    {
+        ADBC_ERROR("failed to send pull command");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_free(doc);
+    doc = NULL;
+    adbc__transfer_wait(fd);
 
 cleanup:
     yyjson_mut_doc_free(doc);
@@ -929,15 +1009,161 @@ cleanup:
 void push_cmd(void *data)
 {
     adbc_cmd_options_t *options = data;
-    adbc__transfer_cmd(options, "push",
-            options->local_path, options->remote_path);
+    size_t file_count = options->push_local_paths.size;
+
+    if(file_count == 0U)
+    {
+        ADBC_ERROR("push requires at least one local path");
+        return;
+    }
+
+    for(size_t i = 0U; i < file_count; i++)
+    {
+        const char *local_path = aparse_list_get(
+                &options->push_local_paths, const char *, i);
+        const char *remote_path = options->remote_path;
+        char *owned_remote_path = NULL;
+
+        if(file_count > 1U)
+        {
+            size_t local_len = strlen(local_path);
+            size_t remote_len = strlen(options->remote_path);
+            const char *base_name = NULL;
+            size_t base_len = 0U;
+            bool add_separator = remote_len > 0U &&
+                options->remote_path[remote_len - 1U] != '/';
+
+            while(local_len > 0U && local_path[local_len - 1U] == '/')
+                local_len--;
+            base_name = local_path + local_len;
+            while(base_name > local_path && base_name[-1] != '/')
+                base_name--;
+            base_len = (size_t)((local_path + local_len) - base_name);
+            if(base_len == 0U || remote_len > SIZE_MAX - base_len -
+                    (add_separator ? 2U : 1U))
+            {
+                ADBC_ERROR("cannot determine remote filename for \"%s\"",
+                        local_path);
+                return;
+            }
+
+            owned_remote_path = malloc(remote_len +
+                    (add_separator ? 1U : 0U) + base_len + 1U);
+            if(owned_remote_path == NULL)
+            {
+                ADBC_ERROR("failed to allocate remote destination path");
+                return;
+            }
+
+            memcpy(owned_remote_path, options->remote_path, remote_len);
+            if(add_separator)
+                owned_remote_path[remote_len++] = '/';
+            memcpy(owned_remote_path + remote_len, base_name, base_len);
+            owned_remote_path[remote_len + base_len] = '\0';
+            remote_path = owned_remote_path;
+        }
+
+        adbc__transfer_cmd(options, "push", local_path, remote_path);
+        free(owned_remote_path);
+    }
 }
 
 void pull_cmd(void *data)
 {
     adbc_cmd_options_t *options = data;
-    adbc__transfer_cmd(options, "pull",
-            options->pull_local_path, options->pull_remote_path);
+    struct stat local_info = {0};
+    bool local_is_dir = false;
+    bool valid = true;
+    size_t file_count = options->pull_remote_paths.size;
+    const char **local_paths = NULL;
+    char **owned_paths = NULL;
+
+    if(file_count == 0U)
+    {
+        ADBC_ERROR("pull requires at least one remote path");
+        return;
+    }
+
+    if(stat(options->pull_local_path, &local_info) == 0)
+        local_is_dir = S_ISDIR(local_info.st_mode);
+    else if(errno != ENOENT)
+    {
+        adbc_log_err_errno("failed to inspect local destination");
+        return;
+    }
+
+    if(file_count > 1U && !local_is_dir)
+    {
+        ADBC_ERROR("multiple remote paths require a local directory");
+        return;
+    }
+
+    local_paths = calloc(file_count, sizeof(*local_paths));
+    owned_paths = calloc(file_count, sizeof(*owned_paths));
+    if(local_paths == NULL || owned_paths == NULL)
+    {
+        ADBC_ERROR("failed to allocate pull path list");
+        valid = false;
+        goto cleanup;
+    }
+
+    for(size_t i = 0U; i < file_count; i++)
+    {
+        const char *remote_path = aparse_list_get(
+                &options->pull_remote_paths, const char *, i);
+        local_paths[i] = options->pull_local_path;
+        if(local_is_dir)
+        {
+            size_t remote_len = strlen(remote_path);
+            const char *base_name = NULL;
+            size_t base_len = 0U;
+            size_t local_len = strlen(options->pull_local_path);
+            bool add_separator = local_len > 0U &&
+                options->pull_local_path[local_len - 1U] != '/';
+
+            while(remote_len > 0U && remote_path[remote_len - 1U] == '/')
+                remote_len--;
+            base_name = remote_path + remote_len;
+            while(base_name > remote_path && base_name[-1] != '/')
+                base_name--;
+            base_len = (size_t)((remote_path + remote_len) - base_name);
+            if(base_len == 0U || local_len > SIZE_MAX - base_len - 2U)
+            {
+                ADBC_ERROR("cannot determine local filename for \"%s\"",
+                        remote_path);
+                valid = false;
+                break;
+            }
+
+            owned_paths[i] = malloc(local_len + (add_separator ? 1U : 0U) +
+                    base_len + 1U);
+            if(owned_paths[i] == NULL)
+            {
+                ADBC_ERROR("failed to allocate local destination path");
+                valid = false;
+                break;
+            }
+
+            memcpy(owned_paths[i], options->pull_local_path, local_len);
+            if(add_separator)
+                owned_paths[i][local_len++] = '/';
+            memcpy(owned_paths[i] + local_len, base_name, base_len);
+            owned_paths[i][local_len + base_len] = '\0';
+            local_paths[i] = owned_paths[i];
+        }
+    }
+
+    if(valid)
+        adbc__pull_transfer_cmd(options, local_paths);
+
+cleanup:
+    if(owned_paths != NULL)
+    {
+        for(size_t i = 0U; i < file_count; i++)
+            free(owned_paths[i]);
+    }
+    free(owned_paths);
+    free(local_paths);
 }
 
 void stat_cmd(void *data)
@@ -1063,6 +1289,117 @@ void stat_cmd(void *data)
                 printf("Access: %s\n", atime_text);
                 printf("Modify: %s\n", mtime_text);
                 printf("Change: %s\n", ctime_text);
+        }
+        else
+            ADBC_ERROR("unhandled server packet type: %s", type);
+
+        yyjson_doc_free(response);
+    }
+
+cleanup:
+    yyjson_mut_doc_free(doc);
+    adbc__close_socket(&fd);
+}
+
+void ls_cmd(void *data)
+{
+    adbc_cmd_options_t *options = data;
+    int fd = -1;
+    yyjson_mut_doc *doc = NULL;
+    yyjson_mut_val *root = NULL;
+    bool done = false;
+
+    fd = adbc__connect_server(options);
+    if(fd < 0)
+        goto cleanup;
+
+    doc = yyjson_mut_doc_new(NULL);
+    if(doc == NULL)
+    {
+        ADBC_ERROR("failed to allocate ls command");
+        goto cleanup;
+    }
+
+    root = yyjson_mut_obj(doc);
+    if(root == NULL)
+    {
+        ADBC_ERROR("failed to create ls command");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_set_root(doc, root);
+    if(!yyjson_mut_obj_add_str(doc, root, "type", "cmd") ||
+            !yyjson_mut_obj_add_str(doc, root, "cmd", "ls") ||
+            !yyjson_mut_obj_add_str(doc, root, "remote_path", options->ls_path))
+    {
+        ADBC_ERROR("failed to build ls command");
+        goto cleanup;
+    }
+
+    if(!adbc_send_json(fd, doc))
+    {
+        ADBC_ERROR("failed to send ls command");
+        goto cleanup;
+    }
+
+    yyjson_mut_doc_free(doc);
+    doc = NULL;
+
+    while(!done)
+    {
+        yyjson_doc *response = NULL;
+        yyjson_val *response_root = NULL;
+        const char *type = NULL;
+
+        if(!adbc_recv_json(fd, &response))
+        {
+            ADBC_ERROR("failed to receive ls response");
+            yyjson_doc_free(response);
+            break;
+        }
+
+        if(!adbc__get_packet_type(response, &response_root, &type))
+        {
+            yyjson_doc_free(response);
+            break;
+        }
+
+        if(strcmp(type, "log") == 0)
+            adbc_log_handle_server(response_root);
+        else if(strcmp(type, "result") == 0)
+        {
+            yyjson_val *entries = yyjson_obj_get(response_root, "entries");
+
+            done = true;
+            if(!adbc__check_result_error(response_root))
+            {
+                if(!yyjson_is_arr(entries))
+                    ADBC_ERROR("invalid ls response");
+                else
+                {
+                    size_t index = 0U;
+                    yyjson_val *entry = NULL;
+                    while((entry = yyjson_arr_get(entries, index++)) != NULL)
+                    {
+                        yyjson_val *name_value = yyjson_obj_get(entry, "name");
+                        yyjson_val *errno_value = yyjson_obj_get(entry, "errno");
+                        const char *name = NULL;
+
+                        if(!yyjson_is_str(name_value) ||
+                                !yyjson_is_int(errno_value))
+                        {
+                            ADBC_ERROR("invalid ls entry");
+                            break;
+                        }
+
+                        name = yyjson_get_str(name_value);
+                        printf("%s\n", name);
+                        if(yyjson_get_sint(errno_value) != 0)
+                            fprintf(stderr, "%s: %s\n", name,
+                                    strerror((int)yyjson_get_sint(errno_value)));
+                    }
+                }
+            }
         }
         else
             ADBC_ERROR("unhandled server packet type: %s", type);

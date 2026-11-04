@@ -56,8 +56,21 @@ typedef struct
     uint64_t bytes;
     uint64_t total_bytes;
     uint64_t last_report_ms;
+    uint64_t *batch_bytes;
+    uint64_t *batch_total_bytes;
     bool sending;
 } adbc__transfer_t;
+
+typedef struct
+{
+    const char *local_path;
+    const char *remote_path;
+    FILE *file;
+    adb_stream_t *stream;
+    adbc__transfer_t transfer;
+    bool local_created;
+    bool success;
+} adbc__pull_item_t;
 
 typedef const char *adbc__server_error_t;
 
@@ -66,10 +79,17 @@ static bool adbc__send_progress(adbc__transfer_t *transfer)
     yyjson_mut_doc *doc = NULL;
     yyjson_mut_val *root = NULL;
     bool result = false;
+    uint64_t bytes = 0U;
+    uint64_t total_bytes = 0U;
 
     if(transfer == NULL || transfer->server == NULL ||
             transfer->server->client_fd < 0)
         return false;
+
+    bytes = transfer->batch_bytes != NULL ?
+        *transfer->batch_bytes : transfer->bytes;
+    total_bytes = transfer->batch_total_bytes != NULL ?
+        *transfer->batch_total_bytes : transfer->total_bytes;
 
     doc = yyjson_mut_doc_new(NULL);
     if(doc == NULL)
@@ -81,8 +101,8 @@ static bool adbc__send_progress(adbc__transfer_t *transfer)
 
     yyjson_mut_doc_set_root(doc, root);
     if(!yyjson_mut_obj_add_str(doc, root, "type", "progress") ||
-            !yyjson_mut_obj_add_uint(doc, root, "bytes", transfer->bytes) ||
-            !yyjson_mut_obj_add_uint(doc, root, "total_bytes", transfer->total_bytes))
+            !yyjson_mut_obj_add_uint(doc, root, "bytes", bytes) ||
+            !yyjson_mut_obj_add_uint(doc, root, "total_bytes", total_bytes))
         goto cleanup;
 
     result = adbc_send_json(transfer->server->client_fd, doc);
@@ -109,6 +129,8 @@ static int adbc__transfer_read(void *userdata, uint8_t *buffer, size_t size)
     adbc__transfer_t *transfer = userdata;
     size_t count = fread(buffer, 1U, size, transfer->file);
     transfer->bytes += (uint64_t)count;
+    if(transfer->batch_bytes != NULL)
+        *transfer->batch_bytes += (uint64_t)count;
     if(!adbc__maybe_send_progress(transfer))
         return -(int)ADB_ERR_IO;
     return (int)count;
@@ -119,6 +141,8 @@ static int adbc__transfer_write(void *userdata, const uint8_t *buffer, size_t si
     adbc__transfer_t *transfer = userdata;
     size_t count = fwrite(buffer, 1U, size, transfer->file);
     transfer->bytes += (uint64_t)count;
+    if(transfer->batch_bytes != NULL)
+        *transfer->batch_bytes += (uint64_t)count;
     if(!adbc__maybe_send_progress(transfer))
         return -(int)ADB_ERR_IO;
     return (int)count;
@@ -430,6 +454,7 @@ static adbc__server_error_t adbc__cmd_push(
     struct stat file_info = {0};
     FILE *file = NULL;
     adbc__transfer_t transfer = {0};
+    adb_stream_t *stream = NULL;
     adb_error_t res = ADB_ERR_OK;
     adbc__server_error_t error = NULL;
 
@@ -481,11 +506,26 @@ static adbc__server_error_t adbc__cmd_push(
     transfer.file = file;
     transfer.total_bytes = (uint64_t)file_info.st_size;
     transfer.last_report_ms = adbc_util_monotonic_ms();
-    res = adb_sync_push(*conn, remote_path,
+    res = adb_sync_push_start(&stream, *conn, remote_path,
             (uint32_t)file_info.st_mode,
             (uint32_t)file_info.st_mtim.tv_sec,
             (size_t)file_info.st_size,
             adbc__transfer_read, &transfer);
+    while(res == ADB_ERR_OK && stream != NULL && !adb_stream_done(stream))
+    {
+        res = adb_conn_stream_dispatch(*conn);
+        if(res == ADB_ERR_NOT_FOUND)
+            res = ADB_ERR_OK;
+        else if(res != ADB_ERR_OK && !adb_stream_done(stream))
+            break;
+    }
+    if(stream != NULL)
+    {
+        adb_error_t finalize_res = adb_sync_push_finalize(stream);
+        stream = NULL;
+        if(res == ADB_ERR_OK)
+            res = finalize_res;
+    }
     if (res != ADB_ERR_OK)
         error = adb_strerror(res);
     else if(!adbc__send_progress(&transfer))
@@ -507,14 +547,13 @@ static adbc__server_error_t adbc__cmd_pull(
 {
     adb_conn_t **conn = NULL;
     adbc__device_t *device = NULL;
-    const char *local_path = NULL;
-    const char *remote_path = NULL;
-    adb_sync_stat_t remote_info = {0};
-    FILE *file = NULL;
-    adbc__transfer_t transfer = {0};
-    adb_error_t res = ADB_ERR_OK;
-    int remote_errno = 0;
-    bool local_created = false;
+    yyjson_val *files = NULL;
+    adbc__pull_item_t *items = NULL;
+    size_t file_count = 0U;
+    size_t active_streams = 0U;
+    uint64_t batch_bytes = 0U;
+    uint64_t batch_total_bytes = 0U;
+    adb_error_t dispatch_res = ADB_ERR_OK;
     adbc__server_error_t error = NULL;
 
     (void)response_doc;
@@ -538,50 +577,118 @@ static adbc__server_error_t adbc__cmd_pull(
     if(!conn)
         return "no device was connected";
 
-    error = adbc__json_get_str(req_root, "local_path", true, &local_path);
-    if(error != NULL)
-        goto end;
-    error = adbc__json_get_str(req_root, "remote_path", true, &remote_path);
-    if(error != NULL)
-        goto end;
+    files = yyjson_obj_get(req_root, "files");
+    if(!yyjson_is_arr(files))
+        return "field 'files' must be an array";
+    file_count = yyjson_arr_size(files);
+    if(file_count == 0U)
+        return "pull requires at least one file";
 
-    res = adb_sync_stat(*conn, remote_path, &remote_info, &remote_errno);
-    if(res != ADB_ERR_OK)
+    items = calloc(file_count, sizeof(*items));
+    if(items == NULL)
+        return "failed to allocate pull file list";
+
+    for(size_t i = 0U; i < file_count; i++)
     {
-        error = adb_strerror(res);
-        goto end;
+        yyjson_val *file = yyjson_arr_get(files, i);
+
+        error = adbc__json_get_str(file, "remote_path", true,
+                &items[i].remote_path);
+        if(error != NULL)
+            goto cleanup;
+        error = adbc__json_get_str(file, "local_path", true,
+                &items[i].local_path);
+        if(error != NULL)
+            goto cleanup;
+
+        for(size_t previous = 0U; previous < i; previous++)
+        {
+            if(strcmp(items[previous].local_path, items[i].local_path) == 0)
+            {
+                error = "pull destination paths must be unique";
+                goto cleanup;
+            }
+        }
+
+        items[i].file = fopen(items[i].local_path, "wb");
+        if(items[i].file == NULL)
+        {
+            error = "failed to open local file";
+            goto cleanup;
+        }
+        items[i].local_created = true;
+        items[i].transfer.server = ctx;
+        items[i].transfer.file = items[i].file;
+        items[i].transfer.last_report_ms = adbc_util_monotonic_ms();
+        items[i].transfer.batch_bytes = &batch_bytes;
+        items[i].transfer.batch_total_bytes = &batch_total_bytes;
     }
 
-    file = fopen(local_path, "wb");
-    if(file == NULL)
+    for(size_t i = 0U; i < file_count; i++)
     {
-        error = "failed to open local file";
-        goto end;
+        adb_error_t res = adb_sync_pull_start(&items[i].stream, *conn,
+                items[i].remote_path, adbc__transfer_write,
+                &items[i].transfer);
+        if(res != ADB_ERR_OK)
+        {
+            error = adb_strerror(res);
+            goto cleanup;
+        }
+        active_streams++;
     }
-    local_created = true;
 
-    transfer.server = ctx;
-    transfer.file = file;
-    transfer.total_bytes = remote_info.size;
-    transfer.last_report_ms = adbc_util_monotonic_ms();
-    res = adb_sync_pull(*conn, remote_path, adbc__transfer_write, &transfer);
-    if(res != ADB_ERR_OK)
-        error = adb_strerror(res);
-    else if(!adbc__send_progress(&transfer))
+    while(active_streams > 0U)
+    {
+        dispatch_res = adb_conn_stream_dispatch(*conn);
+        for(size_t i = 0U; i < file_count; i++)
+        {
+            adb_error_t res = ADB_ERR_OK;
+            if(items[i].stream == NULL ||
+                    !adb_stream_done(items[i].stream))
+                continue;
+
+            res = adb_sync_pull_finalize(items[i].stream);
+            items[i].stream = NULL;
+            active_streams--;
+            if(res == ADB_ERR_OK)
+                items[i].success = true;
+            else if(error == NULL)
+                error = adb_strerror(res);
+        }
+
+        if(dispatch_res != ADB_ERR_OK &&
+                dispatch_res != ADB_ERR_NOT_FOUND && error == NULL)
+            error = adb_strerror(dispatch_res);
+    }
+
+    if(error == NULL && !adbc__send_progress(&items[file_count - 1U].transfer))
         error = "failed to send final transfer progress";
 
-end:
-    if(file != NULL)
+cleanup:
+    for(size_t i = 0U; i < file_count; i++)
     {
-        if(fclose(file) != 0 && error == NULL)
-            error = "failed to close local file";
+        if(items[i].stream != NULL)
+        {
+            (void)adb_sync_pull_finalize(items[i].stream);
+            items[i].stream = NULL;
+        }
+        if(items[i].file != NULL)
+        {
+            if(fclose(items[i].file) != 0)
+            {
+                items[i].success = false;
+                if(error == NULL)
+                    error = "failed to close local file";
+            }
+            items[i].file = NULL;
+        }
+        if(items[i].local_created && !items[i].success)
+            (void)remove(items[i].local_path);
     }
+    free(items);
+
     if(error)
-    {
-        if(local_created)
-            (void)remove(local_path);
         adbc__device_destroy(device);
-    }
     return error;
 }
 
@@ -646,6 +753,95 @@ static adbc__server_error_t adbc__cmd_stat(
     return NULL;
 }
 
+typedef struct
+{
+    yyjson_mut_doc *doc;
+    yyjson_mut_val *entries;
+} adbc__ls_response_t;
+
+static adb_error_t adbc__append_ls_entry(
+        void *userdata,
+        const char *name,
+        const adb_sync_stat_t *info,
+        const int error_num)
+{
+    adbc__ls_response_t *response = userdata;
+    yyjson_mut_val *entry = NULL;
+
+    if(response == NULL || response->doc == NULL ||
+            response->entries == NULL || name == NULL || info == NULL)
+        return ADB_ERR_PARAM;
+
+    entry = yyjson_mut_obj(response->doc);
+    if(entry == NULL ||
+            !yyjson_mut_obj_add_strcpy(response->doc, entry, "name", name) ||
+            !yyjson_mut_obj_add_uint(response->doc, entry, "dev", info->dev) ||
+            !yyjson_mut_obj_add_uint(response->doc, entry, "ino", info->ino) ||
+            !yyjson_mut_obj_add_uint(response->doc, entry, "mode", info->mode) ||
+            !yyjson_mut_obj_add_uint(response->doc, entry, "nlink", info->nlink) ||
+            !yyjson_mut_obj_add_uint(response->doc, entry, "uid", info->uid) ||
+            !yyjson_mut_obj_add_uint(response->doc, entry, "gid", info->gid) ||
+            !yyjson_mut_obj_add_uint(response->doc, entry, "size", info->size) ||
+            !yyjson_mut_obj_add_sint(response->doc, entry, "atime", info->atime) ||
+            !yyjson_mut_obj_add_sint(response->doc, entry, "mtime", info->mtime) ||
+            !yyjson_mut_obj_add_sint(response->doc, entry, "ctime", info->ctime) ||
+            !yyjson_mut_obj_add_sint(response->doc, entry, "errno", error_num) ||
+            !yyjson_mut_arr_add_val(response->entries, entry))
+        return ADB_ERR_NO_MEM;
+
+    return ADB_ERR_OK;
+}
+
+static adbc__server_error_t adbc__cmd_ls(
+        adbc__server_ctx_t *ctx,
+        yyjson_val *req_root,
+        yyjson_mut_doc *response_doc,
+        yyjson_mut_val *response_root)
+{
+    adb_conn_t *conn = NULL;
+    const char *remote_path = NULL;
+    yyjson_mut_val *entries = NULL;
+    adbc__ls_response_t response = {0};
+    adb_error_t res = ADB_ERR_OK;
+
+    if(ctx == NULL || response_doc == NULL || response_root == NULL)
+        return "invalid ls command arguments";
+
+    for(size_t i = 0U; i < ctx->devices.size; i++)
+    {
+        adbc__device_t *candidate =
+            &adbc_dynarr_get(&ctx->devices, adbc__device_t, i);
+        if(candidate->conn == NULL)
+            continue;
+        if(conn != NULL)
+            return "more than one device was connected";
+        conn = candidate->conn;
+    }
+
+    if(conn == NULL)
+        return "no device was connected";
+
+    if(adbc__json_get_str(req_root, "remote_path", true,
+                &remote_path) != NULL)
+        return "invalid remote path";
+
+    entries = yyjson_mut_arr(response_doc);
+    if(entries == NULL)
+        return "out of memory while creating directory listing";
+
+    response.doc = response_doc;
+    response.entries = entries;
+    res = adb_sync_list(conn, remote_path, adbc__append_ls_entry, &response);
+    if(res != ADB_ERR_OK)
+        return adb_strerror(res);
+
+    if(!yyjson_mut_obj_add_val(response_doc, response_root,
+                "entries", entries))
+        return "failed to add directory entries to JSON response";
+
+    return NULL;
+}
+
 static bool adbc__handle_cmd(adbc__server_ctx_t *ctx, const int client_fd)
 {
     static const struct
@@ -660,7 +856,8 @@ static bool adbc__handle_cmd(adbc__server_ctx_t *ctx, const int client_fd)
         { "disconnect", adbc__cmd_disconnect },
         { "push", adbc__cmd_push },
         { "pull", adbc__cmd_pull },
-        { "stat", adbc__cmd_stat }
+        { "stat", adbc__cmd_stat },
+        { "ls", adbc__cmd_ls }
     };
 
     bool result = false;

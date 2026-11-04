@@ -32,16 +32,21 @@ The `disconnect` command requires a `serial` field identifying the connected dev
 
 ### 1.3 File Transfer Fields
 
-The following fields apply to `pull` and `push` commands. The `stat` command
-uses only `remote_path`.
+The `push` command uses `remote_path` and `local_path`. The `pull` command
+accepts a `files` array containing one or more remote and local path pairs. The
+`stat` and `ls` commands use only `remote_path`; `ls` lists one remote directory.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `remote_path` | string | Yes | Path to the target file on the remote device. |
-| `local_path` | string | Yes | Path to the target file on the local machine. |
+| `remote_path` | string | Yes for `push`, `stat`, and `ls` | Remote file or directory path. |
+| `local_path` | string | Yes for `push` | Path to the target file on the local machine. |
+| `files` | array | Yes for `pull` | File objects with `remote_path` and `local_path` strings. |
 
 The `stat` command returns the remote file's device, inode, mode, link count,
 ownership, size, and timestamps in the result packet.
+
+The `ls` command returns an `entries` array. Each entry contains its `name`,
+stat fields, and `errno` (zero when the entry was inspected successfully).
 
 ### 1.4 Example: Pull Command
 
@@ -52,8 +57,12 @@ The following packet requests the server to pull a file from a remote device to 
     "type": "cmd",
     "cmd": "pull",
     "log": "debug",
-    "local_path": "/home/binaryfox0/Download/important.txt",
-    "remote_path": "/home/binaryfox0/Download/important.txt"
+    "files": [
+        {
+            "local_path": "/home/binaryfox0/Download/important.txt",
+            "remote_path": "/home/binaryfox0/Download/important.txt"
+        }
+    ]
 }
 ````
 

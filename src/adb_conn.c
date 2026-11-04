@@ -36,6 +36,8 @@
     ADB__FEATURE_SENDRECV_V2_BROTLI "," \
     ADB__FEATURE_DELAYED_ACK
 
+#define ADB__STREAM_INIT_DELAYED_ACK_BYTES (32 * 1024 * 1024)
+
 typedef enum
 {
     ADB__CONN_STATE_BOOTLOADER,
@@ -694,6 +696,38 @@ adb_error_t adb__conn_stream_add(
     return ADB_ERR_OK;
 }
 
+adb_error_t adb__stream_open(
+        adb_stream_t *stream,
+        adb_conn_t *conn,
+        const void *payload,
+        const size_t payload_size)
+{
+    adb_error_t res = ADB_ERR_OK;
+    adb__packet_t pkt = {0};
+
+    if(!stream || !conn || !stream->packet_fn || stream->conn ||
+            ((payload_size == 0) != (payload == NULL)) ||
+            payload_size > UINT32_MAX)
+        return ADB_ERR_PARAM;
+
+    stream->delayed_ack = adb__conn_support(
+            conn, ADB__FEATURE_DELAYED_ACK);
+    stream->our_asb = stream->delayed_ack ?
+            ADB__STREAM_INIT_DELAYED_ACK_BYTES : 0;
+    stream->local_id = adb__conn_next_id(conn);
+
+    pkt.command = ADB__CMD_OPEN;
+    pkt.arg0 = stream->local_id;
+    pkt.arg1 = (uint32_t)stream->our_asb;
+    pkt.payload_size = (uint32_t)payload_size;
+
+    res = adb__packet_write(conn, &pkt, payload);
+    if(res != ADB_ERR_OK)
+        return res;
+
+    return adb__conn_stream_add(conn, stream);
+}
+
 void adb__conn_stream_remove(
         adb_conn_t *conn,
         adb_stream_t *stream)
@@ -716,6 +750,38 @@ void adb__conn_stream_remove(
     }
 }
 
+static adb_error_t adb__stream_ack(
+        adb_stream_t *stream,
+        const adb__packet_t *pkt)
+{
+    adb_error_t res = ADB_ERR_OK;
+    adb__packet_t ack = {0};
+
+    ack.command = ADB__CMD_OKAY;
+    ack.arg0 = pkt->arg1;
+    ack.arg1 = pkt->arg0;
+
+    if(stream->delayed_ack)
+    {
+        stream->their_asb -= (int32_t)pkt->payload_size;
+        stream->pending_ack_bytes += (int32_t)pkt->payload_size;
+        if(stream->their_asb >= 0)
+            return ADB_ERR_OK;
+
+        ack.payload_size = sizeof(stream->pending_ack_bytes);
+        res = adb__packet_write(stream->conn, &ack,
+                &stream->pending_ack_bytes);
+        if(res != ADB_ERR_OK)
+            return res;
+
+        stream->their_asb += stream->pending_ack_bytes;
+        stream->pending_ack_bytes = 0;
+        return ADB_ERR_OK;
+    }
+
+    return adb__packet_write(stream->conn, &ack, NULL);
+}
+
 adb_error_t adb_conn_stream_dispatch(
         adb_conn_t *conn)
 {
@@ -723,6 +789,7 @@ adb_error_t adb_conn_stream_dispatch(
     adb__packet_t pkt = {0};
     uint8_t *payload = NULL;
     adb_stream_t *stream = NULL;
+    bool was_opened = false;
 
     if(!conn)
         return ADB_ERR_PARAM;
@@ -761,7 +828,62 @@ adb_error_t adb_conn_stream_dispatch(
         return ADB_ERR_NOT_FOUND;
     }
 
-    res = stream->packet_fn(stream, &pkt, payload);
+    was_opened = stream->opened;
+    if(pkt.command == ADB__CMD_OKAY)
+    {
+        if(!was_opened)
+        {
+            stream->remote_id = pkt.arg0;
+            if(stream->delayed_ack)
+            {
+                if(!adb__packet_check_size(&pkt, sizeof(stream->their_asb)))
+                    res = ADB_ERR_PROTOCOL;
+                else
+                    memcpy(&stream->their_asb, payload,
+                            sizeof(stream->their_asb));
+            }
+            else if(!adb__packet_check_size(&pkt, 0))
+                res = ADB_ERR_PROTOCOL;
+
+            if(res == ADB_ERR_OK)
+            {
+                stream->opened = true;
+                stream->send_ready = true;
+            }
+        }
+        else if(stream->delayed_ack)
+        {
+            int32_t ack_bytes = 0;
+            if(!adb__packet_check_size(&pkt, sizeof(ack_bytes)))
+                res = ADB_ERR_PROTOCOL;
+            else
+            {
+                memcpy(&ack_bytes, payload, sizeof(ack_bytes));
+                stream->our_asb += ack_bytes;
+            }
+        }
+        else if(!adb__packet_check_size(&pkt, 0))
+            res = ADB_ERR_PROTOCOL;
+        else
+            stream->send_ready = true;
+    }
+    if(res == ADB_ERR_OK)
+        res = stream->packet_fn(stream, &pkt, payload);
+    if(res == ADB_ERR_OK && pkt.command == ADB__CMD_WRTE)
+        res = adb__stream_ack(stream, &pkt);
+    if(res == ADB_ERR_OK && stream->close_pending)
+    {
+        adb__packet_t close_pkt = {0};
+        close_pkt.command = ADB__CMD_CLSE;
+        close_pkt.arg0 = stream->local_id;
+        close_pkt.arg1 = stream->remote_id;
+        res = adb__packet_write(conn, &close_pkt, NULL);
+        if(res == ADB_ERR_OK)
+        {
+            stream->close_pending = false;
+            stream->close_sent = true;
+        }
+    }
     adb__free(payload);
     if(res != ADB_ERR_OK)
     {

@@ -31,10 +31,6 @@ ADB__NODISCARD adb_error_t adb__sync_proto_open(
         adb__sync_t *sync,
         adb_conn_t *conn);
 
-ADB__NODISCARD adb_error_t adb__sync_proto_open_start(
-        adb__sync_t *sync,
-        adb_conn_t *conn);
-
 ADB__NODISCARD adb_error_t adb__sync_proto_write(
         adb__sync_t *sync,
         const void *payload,

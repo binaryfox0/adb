@@ -24,6 +24,12 @@ typedef struct __attribute__((packed))
     int64_t ctime;
 } adb_sync_stat_t;
 
+typedef adb_error_t (*adb_sync_list_fn)(
+        void *userdata,
+        const char *name,
+        const adb_sync_stat_t *info,
+        int error_num);
+
 adb_error_t adb_sync_pull_start(
         adb_stream_t **stream,
         adb_conn_t *conn,
@@ -54,6 +60,19 @@ adb_error_t adb_sync_push(
         const adb_read_fn read_fn,
         void *userdata);
 
+adb_error_t adb_sync_push_start(
+        adb_stream_t **stream,
+        adb_conn_t *conn,
+        const char *remote_path,
+        const uint32_t mode,
+        const uint32_t modified_time,
+        const size_t size,
+        const adb_read_fn read_fn,
+        void *userdata);
+
+adb_error_t adb_sync_push_finalize(
+        adb_stream_t *stream);
+
 adb_error_t adb_sync_push_file(
         adb_conn_t *conn,
         const char *local_path,
@@ -64,5 +83,11 @@ adb_error_t adb_sync_stat(
         const char *remote_path,
         adb_sync_stat_t *out,
         int *out_errno);
+
+adb_error_t adb_sync_list(
+        adb_conn_t *conn,
+        const char *remote_path,
+        const adb_sync_list_fn callback,
+        void *userdata);
 
 #endif

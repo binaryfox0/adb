@@ -57,27 +57,6 @@ adb_error_t adb__sync_proto_open(
     return ADB_ERR_OK;
 }
 
-adb_error_t adb__sync_proto_open_start(
-        adb__sync_t *sync,
-        adb_conn_t *conn)
-{
-    if(!sync || !conn)
-        return ADB_ERR_PARAM;
-
-    memset(sync, 0, sizeof(*sync));
-    sync->conn = conn;
-    sync->delayed_ack = adb__conn_support(conn, ADB__FEATURE_DELAYED_ACK);
-    sync->local_id = adb__conn_next_id(conn);
-    if(sync->delayed_ack)
-        sync->our_asb = ADB__INIT_DELAYED_ACK_BYTES;
-
-    sync->pkt.command = ADB__CMD_OPEN;
-    sync->pkt.arg0 = sync->local_id;
-    sync->pkt.arg1 = sync->delayed_ack ? ADB__INIT_DELAYED_ACK_BYTES : 0;
-    sync->pkt.payload_size = sizeof("sync:");
-    return adb__packet_write(conn, &sync->pkt, "sync:");
-}
-
 adb_error_t adb__sync_proto_write(
         adb__sync_t *sync,
         const void *payload,

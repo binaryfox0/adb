@@ -47,27 +47,30 @@ int main(int argc, char **argv)
     
     aparse_arg push_args[] =
     {
-        aparse_arg_string(
+        aparse_arg_array(
                 "local_path", 
-                NULL, 0, 
-                "Path to source file on the host"),
+                NULL,
+                sizeof(aparse_list), sizeof(char *),
+                APARSE_ARG_TYPE_STRING, 0,
+                "Source file on the host (repeatable)"),
         aparse_arg_string(
                 "remote_path", 
                 NULL, 0, 
-                "Path to destination file on the device"),
+                "Destination path on the device (directory for multiple sources)"),
         aparse_arg_end_marker
     };
 
         aparse_arg pull_args[] =
         {
-                aparse_arg_string(
+                aparse_arg_array(
                                 "remote_path",
-                                NULL, 0,
+                                NULL, sizeof(aparse_list), sizeof(char *),
+                                APARSE_ARG_TYPE_STRING, 0,
                                 "Path to source file on the device"),
                 aparse_arg_string(
                                 "local_path",
                                 NULL, 0,
-                                "Path to destination file on the host"),
+                                "Destination file or directory on the host"),
                 aparse_arg_end_marker
         };
 
@@ -77,6 +80,15 @@ int main(int argc, char **argv)
                                 "path",
                                 NULL, 0,
                                 "Path to the remote file"),
+                aparse_arg_end_marker
+        };
+
+        aparse_arg ls_args[] =
+        {
+                aparse_arg_string(
+                                "path",
+                                NULL, 0,
+                                "Path to the remote directory"),
                 aparse_arg_end_marker
         };
 
@@ -111,16 +123,20 @@ int main(int argc, char **argv)
                 adbc_cmd_options_t, serial),
         aparse_arg_subparser("push", push_args, push_cmd, 
                 &options, sizeof(options), 
-                "Copy local files/directories to device", 
-                adbc_cmd_options_t, local_path, remote_path),
+                "Copy local file(s) to device",
+                adbc_cmd_options_t, push_local_paths, remote_path),
         aparse_arg_subparser("pull", pull_args, pull_cmd,
                 &options, sizeof(options),
                 "Copy files from device to local host",
-                adbc_cmd_options_t, pull_remote_path, pull_local_path),
+                adbc_cmd_options_t, pull_remote_paths, pull_local_path),
         aparse_arg_subparser("stat", stat_args, stat_cmd,
                 &options, sizeof(options),
                 "Show remote file information",
                 adbc_cmd_options_t, stat_path),
+        aparse_arg_subparser("ls", ls_args, ls_cmd,
+                &options, sizeof(options),
+                "List remote directory entries",
+                adbc_cmd_options_t, ls_path),
         aparse_arg_end_marker
     };
     aparse_arg main_args[] =
@@ -141,7 +157,11 @@ int main(int argc, char **argv)
 
     if(aparse_parse(argc, argv, main_args, &dispatch,
                 "libadb command line utils") != APARSE_STATUS_OK)
+        {
+                aparse_list_free(&options.push_local_paths);
+                aparse_list_free(&options.pull_remote_paths);
         return 1;
+        }
 
     if(level_str != NULL)
     {
@@ -150,6 +170,8 @@ int main(int argc, char **argv)
             ADBC_ERROR("unknown log level was specified");
             ADBC_INFO("supported: \"debug\", \"info\", \"warn\", \"error\", "
                     "got: \"%s\"", level_str);
+            aparse_list_free(&options.push_local_paths);
+            aparse_list_free(&options.pull_remote_paths);
             return 1;
         }
     }
@@ -164,5 +186,7 @@ int main(int argc, char **argv)
     }
 
     aparse_dispatch_all(&dispatch);
+        aparse_list_free(&options.push_local_paths);
+        aparse_list_free(&options.pull_remote_paths);
     return 0;
 }

@@ -9,6 +9,7 @@
 #include "adb_sock.h"
 
 #define ADB__FEATURE_STAT_V2            "stat_v2"
+#define ADB__FEATURE_LS_V2              "ls_v2"
 #define ADB__FEATURE_SENDRECV_V2        "sendrecv_v2"
 #define ADB__FEATURE_SENDRECV_V2_BROTLI "sendrecv_v2_brotli"
 #define ADB__FEATURE_SENDRECV_V2_LZ4    "sendrecv_v2_lz4"

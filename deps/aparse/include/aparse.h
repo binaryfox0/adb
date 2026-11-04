@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-/* Source commit: 8622bfe28a9ffd9a0d2c187f68212f4373841a4e */
+/* Source commit: e38d751f8786eb4c2bdd51e59fe309157c7fa3cc */
 
 #ifndef APARSE_H
 #define APARSE_H
@@ -828,6 +828,9 @@ APARSE__INLINE aparse_arg aparse_arg_parser(
  * @return A fully constructed ::aparse_arg definition representing an array argument.
  *
  * @note If @p element_size is 0, the parser assumes an array of pointers (`char*`).
+ * @note A positional array consumes values while leaving the minimum required
+ *       values for later positional arguments. Its own `array_size` remains
+ *       the minimum number of values required by the array.
  */
 APARSE__INLINE aparse_arg aparse_arg_array(
         const char* name, 
@@ -912,6 +915,7 @@ aparse_status aparse_parse(
  * @brief Dispatch all queued handlers and release the dispatch list.
  *
  * @param dispatch The list of dispatched functions.
+ * @note Array storage owned by caller-supplied payloads or destinations remains caller-owned.
  */
 extern void aparse_dispatch_all(aparse_list* dispatch);
 
@@ -923,6 +927,7 @@ extern void aparse_dispatch_all(aparse_list* dispatch);
  * queued handlers will not be run.
  *
  * @param dispatch Dispatch list to free
+ * @note Array storage owned by caller-supplied payloads or destinations remains caller-owned.
  */
 extern void aparse_dispatch_free(aparse_list* dispatch);
 
@@ -1350,7 +1355,7 @@ const aparse_arg aparse__help_arg =
 static void aparse__release_dispatch_entry(
         aparse__dispatch_t *entry)
 {
-    if(entry->args)
+    if(entry->args && entry->freeable)
         aparse__destroy_payload(entry->args, entry->payload);
     if(entry->payload && entry->freeable)
         free(entry->payload);
@@ -1819,7 +1824,7 @@ static aparse_status aparse__process_array(
 {
     int *idx = &ctx->idx;
     aparse_list* dest = arg->ptr;
-    size_t arrsz = 0, increment = 0;
+    size_t arrsz = 0, increment = 0, remaining = 0, reserved = 0;
 
     if(!dest)
         aparse__raise_fatal(ctx, APARSE_STATUS_NULL_POINTER, arg, 0);
@@ -1829,7 +1834,21 @@ static aparse_status aparse__process_array(
         aparse__raise_fatal(ctx, APARSE_STATUS_INVALID_TYPE, arg, 0);
 
     (*idx)--;
-    arrsz = (size_t)(argc - *idx);
+    remaining = (size_t)(argc - *idx);
+    for (aparse_arg* next = arg + 1; aparse_arg_nend(next); next++)
+    {
+        size_t required = 0;
+        if (!aparse__is_positional(next))
+            continue;
+        required = next->type & APARSE_ARG_TYPE_ARRAY ? next->array_size : 1;
+        if (reserved >= remaining || required >= remaining - reserved)
+        {
+            reserved = remaining;
+            break;
+        }
+        reserved += required;
+    }
+    arrsz = remaining - reserved;
     increment = arg->type & APARSE_ARG_TYPE_STRING ? 
         sizeof(char*) : 
         arg->element_size;
@@ -1964,11 +1983,27 @@ static void aparse__destroy_payload(
         const aparse_arg *args, 
         uint8_t *payload)
 {
+    size_t payload_size = 0;
+    uintptr_t payload_start = (uintptr_t)payload;
+
     if(!args || !payload)
         return;
+
+    for(size_t i = 0; i < args->layout_size; i++)
+    {
+        size_t end = args->data_layout[i * 2] + args->data_layout[i * 2 + 1];
+        if(end > payload_size)
+            payload_size = end;
+    }
+
     aparse__foreach(sa, args)
     {
         if(!(sa->type & APARSE_ARG_TYPE_ARRAY))
+            continue;
+        uintptr_t list_start = (uintptr_t)sa->ptr;
+        if(list_start < payload_start ||
+                list_start - payload_start > payload_size ||
+                sizeof(aparse_list) > payload_size - (list_start - payload_start))
             continue;
         free(((aparse_list*)sa->ptr)->ptr);
     }

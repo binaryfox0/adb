@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <aparse.h>
 #include <adb/adb_log.h>
 
 typedef struct
@@ -12,6 +13,7 @@ typedef struct
     adb_log_level_t opt_lvl;
     const char *opt_key;
     const char *opt_serial;
+    aparse_list push_local_paths;
     union 
     {
         struct 
@@ -26,9 +28,10 @@ typedef struct
         };
         const char *serial;
     };
-    const char *pull_remote_path;
+    aparse_list pull_remote_paths;
     const char *pull_local_path;
     const char *stat_path;
+    const char *ls_path;
 } adbc_cmd_options_t;
 
 void kill_server_cmd(void *data);
@@ -40,4 +43,5 @@ void disconnect_cmd(void *data);
 void push_cmd(void *data);
 void pull_cmd(void *data);
 void stat_cmd(void *data);
+void ls_cmd(void *data);
 #endif
