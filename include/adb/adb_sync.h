@@ -48,8 +48,6 @@ adb_error_t adb_sync_pull(
         const adb_write_fn write_fn,
         void *userdata);
 
-adb_error_t adb_sync_pull_finalize(
-        adb_stream_t *stream);
 
 adb_error_t adb_sync_push(
         adb_conn_t *conn,

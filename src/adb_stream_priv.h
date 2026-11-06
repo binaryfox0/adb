@@ -44,10 +44,16 @@ typedef struct adb_stream
     void (*destroy_fn)(adb_stream_t *stream);
 } adb_stream_t;
 
+ADB__NODISCARD adb_error_t adb__stream_ack(
+        adb_stream_t *stream,
+        const adb__packet_t *pkt);
+
 ADB__NODISCARD adb_error_t adb__stream_open(
-    adb_stream_t *stream,
-    adb_conn_t *conn,
-    const void *payload,
-    size_t payload_size);
+        adb_stream_t *stream,
+        adb_conn_t *conn,
+        const void *payload,
+        size_t payload_size);
+
+void adb_stream_close(adb_stream_t *stream);
 
 #endif

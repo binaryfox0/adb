@@ -257,16 +257,6 @@ static adb_error_t adb__push_stream_write(adb_stream_t *stream,
     return ADB_ERR_OK;
 }
 
-static adb_error_t adb__stream_send_close(adb_stream_t *stream)
-{
-    adb__packet_t pkt = {0};
-
-    pkt.command = ADB__CMD_CLSE;
-    pkt.arg0 = stream->local_id;
-    pkt.arg1 = stream->remote_id;
-    return adb__packet_write(stream->conn, &pkt, NULL);
-}
-
 static adb_error_t adb__push_stream_send_request(adb_stream_t *stream,
                                                  adb__sync_push_state_t *state)
 {
@@ -709,17 +699,7 @@ adb_error_t adb_sync_push_finalize(adb_stream_t *stream)
     if(!stream)
         return ADB_ERR_PARAM;
     res = stream->error;
-    if(stream->conn)
-    {
-        if(stream->opened && !stream->close_sent)
-        {
-            adb_error_t close_res = adb__stream_send_close(stream);
-            (void)close_res;
-        }
-        adb__conn_stream_remove(stream->conn, stream);
-    }
-    if(stream->destroy_fn)
-        stream->destroy_fn(stream);
+    adb_stream_close(stream);
     return res;
 }
 
@@ -938,25 +918,6 @@ static void adb__sync_pull_stream_destroy(adb_stream_t *base)
     adb__free(base);
 }
 
-adb_error_t adb_sync_pull_finalize(adb_stream_t *stream)
-{
-    adb_error_t res = ADB_ERR_OK;
-    if(!stream)
-        return ADB_ERR_PARAM;
-    res = stream->error;
-    if(stream->conn)
-    {
-        if(stream->opened && !stream->close_sent)
-        {
-            adb_error_t close_res = adb__stream_send_close(stream);
-            (void)close_res;
-        }
-        adb__conn_stream_remove(stream->conn, stream);
-    }
-    if(stream->destroy_fn)
-        stream->destroy_fn(stream);
-    return res;
-}
 
 adb_error_t adb_sync_pull(adb_conn_t *conn, const char *remote_path,
                           const adb_write_fn write_fn, void *userdata)
@@ -979,7 +940,8 @@ adb_error_t adb_sync_pull(adb_conn_t *conn, const char *remote_path,
             break;
     }
 
-    return adb_sync_pull_finalize(stream);
+    adb_stream_close(stream);
+    return ADB_ERR_OK;
 }
 
 static int adb__pull_file_write(void *userdata, const uint8_t *data,
@@ -1618,17 +1580,7 @@ static adb_error_t adb__sync_list_stream(
     res = stream->error;
 
 cleanup:
-    if(stream->conn)
-    {
-        if(stream->opened && !stream->close_sent)
-        {
-            adb_error_t close_res = adb__stream_send_close(stream);
-            (void)close_res;
-        }
-        adb__conn_stream_remove(stream->conn, stream);
-    }
-    if(stream->destroy_fn)
-        stream->destroy_fn(stream);
+    adb_stream_close(stream);
     return res;
 }
 

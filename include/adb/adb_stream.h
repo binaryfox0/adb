@@ -8,8 +8,11 @@
 
 typedef struct adb_stream adb_stream_t;
 
-bool adb_stream_done(const adb_stream_t *stream);
-
-adb_error_t adb_stream_error(const adb_stream_t *stream);
+bool adb_stream_done(
+        const adb_stream_t *stream);
+adb_error_t adb_stream_error(
+        const adb_stream_t *stream);
+void adb_stream_close(
+        adb_stream_t *stream);
 
 #endif

@@ -647,13 +647,11 @@ static adbc__server_error_t adbc__cmd_pull(
                     !adb_stream_done(items[i].stream))
                 continue;
 
-            res = adb_sync_pull_finalize(items[i].stream);
+            adb_stream_close(items[i].stream);
             items[i].stream = NULL;
             active_streams--;
             if(res == ADB_ERR_OK)
                 items[i].success = true;
-            else if(error == NULL)
-                error = adb_strerror(res);
         }
 
         if(dispatch_res != ADB_ERR_OK &&
@@ -669,7 +667,7 @@ cleanup:
     {
         if(items[i].stream != NULL)
         {
-            (void)adb_sync_pull_finalize(items[i].stream);
+            (void)adb_stream_close(items[i].stream);
             items[i].stream = NULL;
         }
         if(items[i].file != NULL)

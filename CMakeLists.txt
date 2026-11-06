@@ -7,7 +7,8 @@ option(ADB_NO_ZSTD "Build libadb without Zstandard compression support" OFF)
 option(ADB_NO_BROTLI "Build libadb without LZ4 compression support" OFF)
 option(ADB_NO_USB "Build libadb without USB support" OFF)
 option(ADB_BUILD_CLI "Build libadb command line tool" OFF)
-option(ADB_FORCE_MBEDTLS3 "Require MbedTLS 3.x" OFF)
+option(ADB_FORCE_MBEDTLS3 "Force build libadb with MbedTLS 3.x" OFF)
+
 
 function(target_add_strict_flags target)
     if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

@@ -1,4 +1,5 @@
 #include "adbc_utils.h"
+#include "../src/adb_utils.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -114,18 +115,7 @@ bool adbc_util_file_exist(
     return true;
 }
 
-#if defined(_WIN32)
-uint64_t adbc_util_monotonic_ms(void) {
-    return (uint64_t)GetTickCount64();
-}
-#else
 uint64_t adbc_util_monotonic_ms(void)
 {
-    struct timespec timestamp = {0};
-    if(clock_gettime(CLOCK_MONOTONIC, &timestamp) != 0)
-        return 0;
-
-    return (uint64_t)timestamp.tv_sec * UINT64_C(1000) +
-           (uint64_t)timestamp.tv_nsec / UINT64_C(1000000);
+    return adb__util_monotonic_ms();
 }
-#endif
